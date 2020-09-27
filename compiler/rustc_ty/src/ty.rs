@@ -45,6 +45,7 @@ fn sized_constraint_for_ty<'tcx>(
                 .flat_map(|ty| sized_constraint_for_ty(tcx, adtdef, ty))
                 .collect()
         }
+        Variant(_) => unimplemented!("CME todo"),
 
         Projection(..) | Opaque(..) => {
             // must calculate explicitly.

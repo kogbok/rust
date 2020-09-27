@@ -269,6 +269,7 @@ impl<'tcx> LowerInto<'tcx, chalk_ir::Ty<RustInterner<'tcx>>> for Ty<'tcx> {
                 ast::FloatTy::F64 => float(chalk_ir::FloatTy::F64),
             },
             Adt(def, substs) => apply(struct_ty(def.did), substs.lower_into(interner)),
+            Variant(_) => unimplemented!("CME todo"),
             // FIXME(chalk): lower Foreign
             Foreign(def_id) => apply(chalk_ir::TypeName::FnDef(chalk_ir::FnDefId(def_id)), empty()),
             Str => apply(chalk_ir::TypeName::Str, empty()),

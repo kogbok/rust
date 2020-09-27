@@ -273,6 +273,7 @@ fn characteristic_def_id_of_type_cached<'a>(
 ) -> Option<DefId> {
     match *ty.kind() {
         ty::Adt(adt_def, _) => Some(adt_def.did),
+        ty::Variant(ref var) => Some(var.did),
 
         ty::Dynamic(data, ..) => data.principal_def_id(),
 

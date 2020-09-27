@@ -159,6 +159,7 @@ where
                     }
                 }
             }
+            ty::Variant(_) => unimplemented!("CME todo"),
             ty::Projection(proj) => {
                 if self.def_id_visitor.skip_assoc_tys() {
                     // Visitors searching for minimal visibility/reachability want to

@@ -260,6 +260,10 @@ fn dtorck_constraint_for_ty<'tcx>(
             constraints.overflows.extend(overflows.subst(tcx, substs));
         }
 
+        ty::Variant(_) => {
+            unimplemented!("CME todo");
+        }
+
         // Objects must be alive in order for their destructor
         // to be called.
         ty::Dynamic(..) => {

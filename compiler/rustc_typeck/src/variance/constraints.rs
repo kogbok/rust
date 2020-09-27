@@ -301,6 +301,8 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
                 self.add_constraints_from_substs(current, def.did, substs, variance);
             }
 
+            ty::Variant(_) => unimplemented!("CME todo"),
+
             ty::Projection(ref data) => {
                 let tcx = self.tcx();
                 self.add_constraints_from_trait_ref(current, data.trait_ref(tcx), variance);

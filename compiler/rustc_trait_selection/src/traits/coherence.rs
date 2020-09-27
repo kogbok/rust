@@ -530,6 +530,7 @@ fn ty_is_local_constructor(ty: Ty<'_>, in_crate: InCrate) -> bool {
         },
 
         ty::Adt(def, _) => def_id_is_local(def.did, in_crate),
+        ty::Variant(ref var) => def_id_is_local(var.did, in_crate),
         ty::Foreign(did) => def_id_is_local(did, in_crate),
         ty::Opaque(..) => {
             // This merits some explanation.

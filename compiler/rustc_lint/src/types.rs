@@ -980,6 +980,12 @@ impl<'a, 'tcx> ImproperCTypesVisitor<'a, 'tcx> {
                 }
             }
 
+            ty::Variant(_) => FfiUnsafe {
+                ty,
+                reason: "enum variants are not currently supported for FFI".into(),
+                help: None,
+            },
+
             ty::Char => FfiUnsafe {
                 ty,
                 reason: "the `char` type has no C equivalent".into(),

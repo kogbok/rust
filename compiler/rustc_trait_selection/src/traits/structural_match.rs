@@ -139,6 +139,7 @@ impl<'a, 'tcx> TypeVisitor<'tcx> for Search<'a, 'tcx> {
 
         let (adt_def, substs) = match *ty.kind() {
             ty::Adt(adt_def, substs) => (adt_def, substs),
+            ty::Variant(_) => unimplemented!("CME todo"),
             ty::Param(_) => {
                 self.found = Some(NonStructuralMatchTy::Param);
                 return true; // Stop visiting.

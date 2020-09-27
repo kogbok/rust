@@ -1250,6 +1250,8 @@ impl<'tcx> LayoutCx<'tcx, TyCtxt<'tcx>> {
                 tcx.intern_layout(best_layout)
             }
 
+            ty::Variant(_) => unimplemented!("CME todo"),
+
             // Types with no meaningful known layout.
             ty::Projection(_) | ty::Opaque(..) => {
                 let normalized = tcx.normalize_erasing_regions(param_env, ty);
@@ -2154,6 +2156,9 @@ where
                     }
                 }
             }
+
+            // Enum variant types.
+            ty::Variant(_) => unimplemented!("CME todo"),
 
             ty::Projection(_)
             | ty::Bound(..)

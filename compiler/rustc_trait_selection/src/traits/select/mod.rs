@@ -1618,6 +1618,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
                     sized_crit.iter().map(|ty| ty.subst(self.tcx(), substs)).collect(),
                 ))
             }
+            ty::Variant(ref _var) => unimplemented!("CME todo"),
 
             ty::Projection(_) | ty::Param(_) | ty::Opaque(..) => None,
             ty::Infer(ty::TyVar(_)) => Ambiguous,
@@ -1681,7 +1682,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
                 Where(ty::Binder::bind(substs.as_closure().upvar_tys().collect()))
             }
 
-            ty::Adt(..) | ty::Projection(..) | ty::Param(..) | ty::Opaque(..) => {
+            ty::Adt(..) | ty::Projection(..) | ty::Param(..) | ty::Opaque(..) | ty::Variant(_) => {
                 // Fallback to whatever user-defined impls exist in this case.
                 None
             }
@@ -1765,6 +1766,8 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
             ty::Adt(def, substs) if def.is_phantom_data() => substs.types().collect(),
 
             ty::Adt(def, substs) => def.all_fields().map(|f| f.ty(self.tcx(), substs)).collect(),
+
+            ty::Variant(ref _var) => unimplemented!("CME todo"),
 
             ty::Opaque(def_id, substs) => {
                 // We can resolve the `impl Trait` to its concrete type,

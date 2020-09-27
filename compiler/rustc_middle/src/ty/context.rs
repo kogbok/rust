@@ -1888,7 +1888,8 @@ impl<'tcx> TyCtxt<'tcx> {
                     Infer,
                     Projection,
                     Opaque,
-                    Foreign
+                    Foreign,
+                    Variant
                 )?;
 
                 writeln!(fmt, "InternalSubsts interner: #{}", self.0.interners.substs.len())?;

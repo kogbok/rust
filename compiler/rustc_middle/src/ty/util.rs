@@ -731,6 +731,7 @@ impl<'tcx> ty::TyS<'tcx> {
             ty::Tuple(_) => self.tuple_fields().all(Self::is_trivially_freeze),
             ty::Slice(elem_ty) | ty::Array(elem_ty, _) => elem_ty.is_trivially_freeze(),
             ty::Adt(..)
+            | ty::Variant(_)
             | ty::Bound(..)
             | ty::Closure(..)
             | ty::Dynamic(..)
@@ -794,6 +795,8 @@ impl<'tcx> ty::TyS<'tcx> {
         match self.kind() {
             // Look for an impl of both `PartialStructuralEq` and `StructuralEq`.
             Adt(..) => tcx.has_structural_eq_impls(self),
+
+            Variant(_) => unimplemented!("CME todo"),
 
             // Primitive types that satisfy `Eq`.
             Bool | Char | Int(_) | Uint(_) | Str | Never => true,
@@ -1130,6 +1133,7 @@ pub fn needs_drop_components(
 
         // These require checking for `Copy` bounds or `Adt` destructors.
         ty::Adt(..)
+        | ty::Variant(_)
         | ty::Projection(..)
         | ty::Param(_)
         | ty::Bound(..)

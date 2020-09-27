@@ -564,6 +564,7 @@ pub trait PrettyPrinter<'tcx>:
             ty::Adt(def, substs) => {
                 p!(print_def_path(def.did, substs));
             }
+            ty::Variant(_) => unimplemented!("CME todo"),
             ty::Dynamic(data, r) => {
                 let print_r = self.region_should_not_be_omitted(r);
                 if print_r {

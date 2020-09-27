@@ -563,6 +563,7 @@ impl<'rt, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> ValidityVisitor<'rt, 'mir, '
             // check them by visiting their fields/variants.
             // (`Str` UTF-8 check happens in `visit_aggregate`, too.)
             ty::Adt(..)
+            | ty::Variant(_)
             | ty::Tuple(..)
             | ty::Array(..)
             | ty::Slice(..)

@@ -125,6 +125,7 @@ pub fn trivial_dropck_outlives<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
                 false
             }
         }
+        ty::Variant(_) => false,
 
         // The following *might* require a destructor: needs deeper inspection.
         ty::Dynamic(..)

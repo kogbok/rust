@@ -29,9 +29,9 @@ use std::ops::Range;
 use ty::{util::IntTypeExt, VariantDiscr};
 
 #[derive(PartialEq, Clone, Eq, TyDecodable, TyEncodable, Debug, Hash, HashStable)]
-struct VariantDef {
-    did: DefId,
-    discr: VariantDiscr,
+pub struct VariantDef {
+    pub did: DefId,
+    pub discr: VariantDiscr,
 }
 
 impl PartialOrd for VariantDef {
@@ -2333,6 +2333,8 @@ impl<'tcx> TyS<'tcx> {
             ty::Tuple(tys) => tys.iter().all(|ty| ty.expect_ty().is_trivially_sized(tcx)),
 
             ty::Adt(def, _substs) => def.sized_constraint(tcx).is_empty(),
+
+            ty::Variant(ref _var) => unimplemented!("CME todo"),
 
             ty::Projection(_) | ty::Param(_) | ty::Opaque(..) => false,
 

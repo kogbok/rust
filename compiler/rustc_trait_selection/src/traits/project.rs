@@ -1074,6 +1074,7 @@ fn assemble_candidates_from_impls<'cx, 'tcx>(
                     | ty::Uint(_)
                     | ty::Float(_)
                     | ty::Adt(..)
+                    | ty::Variant(_)
                     | ty::Foreign(_)
                     | ty::Str
                     | ty::Array(..)

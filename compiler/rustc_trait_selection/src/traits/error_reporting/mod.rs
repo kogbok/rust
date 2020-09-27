@@ -1282,6 +1282,7 @@ impl<'a, 'tcx> InferCtxtPrivExt<'tcx> for InferCtxt<'a, 'tcx> {
                 ty::Generator(..) => Some(18),
                 ty::Foreign(..) => Some(19),
                 ty::GeneratorWitness(..) => Some(20),
+                ty::Variant(_) => Some(21), // Should this be the same as AdtKind::Enum?
                 ty::Placeholder(..) | ty::Bound(..) | ty::Infer(..) | ty::Error(_) => None,
             }
         }

@@ -144,6 +144,10 @@ impl FlagComputation {
                 self.add_substs(substs);
             }
 
+            &ty::Variant(_) => {
+                unimplemented!("CME todo");
+            }
+
             &ty::Projection(data) => {
                 self.add_flags(TypeFlags::HAS_TY_PROJECTION);
                 self.add_projection_ty(data);
