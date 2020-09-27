@@ -23,9 +23,28 @@ use rustc_target::abi::VariantIdx;
 use rustc_target::spec::abi;
 use std::borrow::Cow;
 use std::cmp::Ordering;
+use std::hash::Hash;
 use std::marker::PhantomData;
 use std::ops::Range;
-use ty::util::IntTypeExt;
+use ty::{util::IntTypeExt, VariantDiscr};
+
+#[derive(PartialEq, Clone, Eq, TyDecodable, TyEncodable, Debug, Hash, HashStable)]
+struct VariantDef {
+    did: DefId,
+    discr: VariantDiscr,
+}
+
+impl PartialOrd for VariantDef {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.did.partial_cmp(&other.did)
+    }
+}
+
+impl Ord for VariantDef {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.did.cmp(&other.did)
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, TyEncodable, TyDecodable)]
 #[derive(HashStable, TypeFoldable, Lift)]
@@ -184,6 +203,10 @@ pub enum TyKind<'tcx> {
     /// The substitutions are for the generics of the function in question.
     /// After typeck, the concrete type can be found in the `types` map.
     Opaque(DefId, SubstsRef<'tcx>),
+
+    /// An enum variant type
+    /// The first DefId is the enum type, and the other is the discriminant.
+    Variant(VariantDef),
 
     /// A type parameter; for example, `T` in `fn f<T>(x: T) {}`.
     Param(ParamTy),

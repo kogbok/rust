@@ -2067,7 +2067,7 @@ impl VariantDef {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, TyEncodable, TyDecodable, HashStable)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, TyEncodable, TyDecodable, HashStable, Hash)]
 pub enum VariantDiscr {
     /// Explicit value for this variant, i.e., `X = 123`.
     /// The `DefId` corresponds to the embedded constant.
