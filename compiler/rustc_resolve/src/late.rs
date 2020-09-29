@@ -19,7 +19,7 @@ use rustc_ast_lowering::ResolverAstLowering;
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_errors::DiagnosticId;
 use rustc_hir::def::Namespace::{self, *};
-use rustc_hir::def::{self, CtorKind, DefKind, PartialRes, PerNS};
+use rustc_hir::def::{self, CtorKind, CtorOf, DefKind, PartialRes, PerNS};
 use rustc_hir::def_id::{DefId, CRATE_DEF_INDEX};
 use rustc_hir::TraitCandidate;
 use rustc_middle::{bug, span_bug};
@@ -275,7 +275,18 @@ impl<'a> PathSource<'a> {
                 )
                 | Res::PrimTy(..)
                 | Res::SelfTy(..) => true,
-                _ => false,
+                Res::Def(DefKind::Ctor(CtorOf::Variant, _), _def_id) => {
+                    eprintln!("is_expected({:?}, {:?}) => true!", self, res);
+                    true
+                }
+                Res::Def(DefKind::Variant, _def_id) => {
+                    eprintln!("is_expected({:?}, {:?}) => true!", self, res);
+                    true
+                }
+                _ => {
+                    eprintln!("is_expected({:?}, {:?}) => false", self, res);
+                    false
+                }
             },
             PathSource::Trait(AliasPossibility::No) => match res {
                 Res::Def(DefKind::Trait, _) => true,
