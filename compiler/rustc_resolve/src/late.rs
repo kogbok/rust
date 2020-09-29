@@ -276,8 +276,8 @@ impl<'a> PathSource<'a> {
                 | Res::PrimTy(..)
                 | Res::SelfTy(..) => true,
                 Res::Def(DefKind::Ctor(CtorOf::Variant, _), _def_id) => {
-                    eprintln!("is_expected({:?}, {:?}) => true!", self, res);
-                    true
+                    eprintln!("is_expected({:?}, {:?}) => false", self, res);
+                    false
                 }
                 Res::Def(DefKind::Variant, _def_id) => {
                     eprintln!("is_expected({:?}, {:?}) => true!", self, res);
