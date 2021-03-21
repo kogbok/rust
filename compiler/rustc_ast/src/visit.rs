@@ -428,9 +428,6 @@ pub fn walk_ty<'a, V: Visitor<'a>>(visitor: &mut V, typ: &'a Ty) {
         TyKind::Infer | TyKind::ImplicitSelf | TyKind::Err => {}
         TyKind::MacCall(ref mac) => visitor.visit_mac(mac),
         TyKind::Never | TyKind::CVarArgs => {}
-        TyKind::Variant(ref ty, _idx) => {
-            visitor.visit_ty(ty);
-        }
     }
 }
 

@@ -1407,7 +1407,6 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
                 );
                 hir::TyKind::Err
             }
-            TyKind::Variant(_, _) => unimplemented!("Need to lower Variant to hir::Ty"),
         };
 
         hir::Ty { kind, span: t.span, hir_id: self.lower_node_id(t.id) }

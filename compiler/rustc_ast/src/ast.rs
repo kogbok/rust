@@ -1927,9 +1927,6 @@ pub enum TyKind {
     Err,
     /// Placeholder for a `va_list`.
     CVarArgs,
-    /// An enum variant type
-    /// The fields are the enum type and the index of this variant.
-    Variant(P<Ty>, usize),
 }
 
 impl TyKind {

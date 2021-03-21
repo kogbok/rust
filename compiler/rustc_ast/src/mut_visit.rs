@@ -485,9 +485,6 @@ pub fn noop_visit_ty<T: MutVisitor>(ty: &mut P<Ty>, vis: &mut T) {
             visit_vec(bounds, |bound| vis.visit_param_bound(bound));
         }
         TyKind::MacCall(mac) => vis.visit_mac(mac),
-        TyKind::Variant(ty, _idx) => {
-            vis.visit_ty(ty);
-        }
     }
     vis.visit_span(span);
 }

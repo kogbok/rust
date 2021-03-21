@@ -1011,10 +1011,6 @@ impl<'a> State<'a> {
             ast::TyKind::CVarArgs => {
                 self.s.word("...");
             }
-            ast::TyKind::Variant(ref ty, _idx) => {
-                self.print_type(ty);
-                self.s.word("::something");
-            }
         }
         self.end();
     }
