@@ -2152,6 +2152,8 @@ impl<'tcx> TyS<'tcx> {
             | ty::Error(_)
             | ty::Infer(IntVar(_) | FloatVar(_)) => tcx.types.u8,
 
+            ty::Variant(_) => unimplemented!("kogbok todo"),
+
             ty::Bound(..)
             | ty::Placeholder(_)
             | ty::Infer(FreshTy(_) | ty::FreshIntTy(_) | ty::FreshFloatTy(_)) => {
