@@ -22,7 +22,7 @@ use rustc_middle::ty::cast::CastTy;
 use rustc_middle::ty::subst::InternalSubsts;
 use rustc_middle::ty::{self, List, TyCtxt, TypeFoldable};
 use rustc_span::symbol::sym;
-use rustc_span::{Span, DUMMY_SP};
+use rustc_span::Span;
 
 use rustc_index::vec::{Idx, IndexVec};
 use rustc_target::spec::abi::Abi;
@@ -32,7 +32,7 @@ use std::{cmp, iter, mem};
 
 use crate::const_eval::{is_const_fn, is_unstable_const_fn};
 use crate::transform::check_consts::{is_lang_panic_fn, qualifs, ConstCx};
-use crate::transform::{MirPass, MirSource};
+use crate::transform::MirPass;
 
 /// A `MirPass` for promotion.
 ///
@@ -47,7 +47,7 @@ pub struct PromoteTemps<'tcx> {
 }
 
 impl<'tcx> MirPass<'tcx> for PromoteTemps<'tcx> {
-    fn run_pass(&self, tcx: TyCtxt<'tcx>, src: MirSource<'tcx>, body: &mut Body<'tcx>) {
+    fn run_pass(&self, tcx: TyCtxt<'tcx>, body: &mut Body<'tcx>) {
         // There's not really any point in promoting errorful MIR.
         //
         // This does not include MIR that failed const-checking, which we still try to promote.
@@ -56,19 +56,17 @@ impl<'tcx> MirPass<'tcx> for PromoteTemps<'tcx> {
             return;
         }
 
-        if src.promoted.is_some() {
+        if body.source.promoted.is_some() {
             return;
         }
 
-        let def = src.with_opt_param().expect_local();
-
         let mut rpo = traversal::reverse_postorder(body);
-        let ccx = ConstCx::new(tcx, def.did, body);
+        let ccx = ConstCx::new(tcx, body);
         let (temps, all_candidates) = collect_temps_and_candidates(&ccx, &mut rpo);
 
         let promotable_candidates = validate_candidates(&ccx, &temps, &all_candidates);
 
-        let promoted = promote_candidates(def.to_global(), body, tcx, temps, promotable_candidates);
+        let promoted = promote_candidates(body, tcx, temps, promotable_candidates);
         self.promoted_fragments.set(promoted);
     }
 }
@@ -126,6 +124,15 @@ impl Candidate {
             Candidate::Argument { .. } | Candidate::InlineAsm { .. } => true,
         }
     }
+
+    fn source_info(&self, body: &Body<'_>) -> SourceInfo {
+        match self {
+            Candidate::Ref(location) | Candidate::Repeat(location) => *body.source_info(*location),
+            Candidate::Argument { bb, .. } | Candidate::InlineAsm { bb, .. } => {
+                *body.source_info(body.terminator_loc(*bb))
+            }
+        }
+    }
 }
 
 fn args_required_const(tcx: TyCtxt<'_>, def_id: DefId) -> Option<Vec<usize>> {
@@ -137,7 +144,7 @@ fn args_required_const(tcx: TyCtxt<'_>, def_id: DefId) -> Option<Vec<usize>> {
             LitKind::Int(a, _) => {
                 ret.push(a as usize);
             }
-            _ => return None,
+            _ => bug!("invalid arg index"),
         }
     }
     Some(ret)
@@ -242,11 +249,8 @@ impl<'tcx> Visitor<'tcx> for Collector<'_, 'tcx> {
             }
             TerminatorKind::InlineAsm { ref operands, .. } => {
                 for (index, op) in operands.iter().enumerate() {
-                    match op {
-                        InlineAsmOperand::Const { .. } => {
-                            self.candidates.push(Candidate::InlineAsm { bb: location.block, index })
-                        }
-                        _ => {}
+                    if let InlineAsmOperand::Const { .. } = op {
+                        self.candidates.push(Candidate::InlineAsm { bb: location.block, index })
                     }
                 }
             }
@@ -297,17 +301,6 @@ impl std::ops::Deref for Validator<'a, 'tcx> {
 struct Unpromotable;
 
 impl<'tcx> Validator<'_, 'tcx> {
-    /// Determines if this code could be executed at runtime and thus is subject to codegen.
-    /// That means even unused constants need to be evaluated.
-    ///
-    /// `const_kind` should not be used in this file other than through this method!
-    fn maybe_runtime(&self) -> bool {
-        match self.const_kind {
-            None | Some(hir::ConstContext::ConstFn) => true,
-            Some(hir::ConstContext::Static(_) | hir::ConstContext::Const) => false,
-        }
-    }
-
     fn validate_candidate(&self, candidate: Candidate) -> Result<(), Unpromotable> {
         match candidate {
             Candidate::Ref(loc) => {
@@ -333,39 +326,14 @@ impl<'tcx> Validator<'_, 'tcx> {
                         if place.projection.contains(&ProjectionElem::Deref) {
                             return Err(Unpromotable);
                         }
-
-                        let mut has_mut_interior =
-                            self.qualif_local::<qualifs::HasMutInterior>(place.local);
-                        // HACK(eddyb) this should compute the same thing as
-                        // `<HasMutInterior as Qualif>::in_projection` from
-                        // `check_consts::qualifs` but without recursion.
-                        if has_mut_interior {
-                            // This allows borrowing fields which don't have
-                            // `HasMutInterior`, from a type that does, e.g.:
-                            // `let _: &'static _ = &(Cell::new(1), 2).1;`
-                            let mut place_projection = &place.projection[..];
-                            // FIXME(eddyb) use a forward loop instead of a reverse one.
-                            while let &[ref proj_base @ .., elem] = place_projection {
-                                // FIXME(eddyb) this is probably excessive, with
-                                // the exception of `union` member accesses.
-                                let ty =
-                                    Place::ty_from(place.local, proj_base, self.body, self.tcx)
-                                        .projection_ty(self.tcx, elem)
-                                        .ty;
-                                if ty.is_freeze(self.tcx.at(DUMMY_SP), self.param_env) {
-                                    has_mut_interior = false;
-                                    break;
-                                }
-
-                                place_projection = proj_base;
-                            }
+                        if self.qualif_local::<qualifs::NeedsDrop>(place.local) {
+                            return Err(Unpromotable);
                         }
 
                         // FIXME(eddyb) this duplicates part of `validate_rvalue`.
+                        let has_mut_interior =
+                            self.qualif_local::<qualifs::HasMutInterior>(place.local);
                         if has_mut_interior {
-                            return Err(Unpromotable);
-                        }
-                        if self.qualif_local::<qualifs::NeedsDrop>(place.local) {
                             return Err(Unpromotable);
                         }
 
@@ -558,14 +526,12 @@ impl<'tcx> Validator<'_, 'tcx> {
                     }
 
                     ProjectionElem::Field(..) => {
-                        if self.maybe_runtime() {
-                            let base_ty =
-                                Place::ty_from(place.local, proj_base, self.body, self.tcx).ty;
-                            if let Some(def) = base_ty.ty_adt_def() {
-                                // No promotion of union field accesses.
-                                if def.is_union() {
-                                    return Err(Unpromotable);
-                                }
+                        let base_ty =
+                            Place::ty_from(place.local, proj_base, self.body, self.tcx).ty;
+                        if let Some(def) = base_ty.ty_adt_def() {
+                            // No promotion of union field accesses.
+                            if def.is_union() {
+                                return Err(Unpromotable);
                             }
                         }
                     }
@@ -612,12 +578,9 @@ impl<'tcx> Validator<'_, 'tcx> {
                 let operand_ty = operand.ty(self.body, self.tcx);
                 let cast_in = CastTy::from_ty(operand_ty).expect("bad input type for cast");
                 let cast_out = CastTy::from_ty(cast_ty).expect("bad output type for cast");
-                match (cast_in, cast_out) {
-                    (CastTy::Ptr(_) | CastTy::FnPtr, CastTy::Int(_)) => {
-                        // ptr-to-int casts are not possible in consts and thus not promotable
-                        return Err(Unpromotable);
-                    }
-                    _ => {}
+                if let (CastTy::Ptr(_) | CastTy::FnPtr, CastTy::Int(_)) = (cast_in, cast_out) {
+                    // ptr-to-int casts are not possible in consts and thus not promotable
+                    return Err(Unpromotable);
                 }
             }
 
@@ -704,28 +667,7 @@ impl<'tcx> Validator<'_, 'tcx> {
 
                 self.validate_place(place)?;
 
-                // HACK(eddyb) this should compute the same thing as
-                // `<HasMutInterior as Qualif>::in_projection` from
-                // `check_consts::qualifs` but without recursion.
-                let mut has_mut_interior =
-                    self.qualif_local::<qualifs::HasMutInterior>(place.local);
-                if has_mut_interior {
-                    let mut place_projection = place.projection;
-                    // FIXME(eddyb) use a forward loop instead of a reverse one.
-                    while let &[ref proj_base @ .., elem] = place_projection {
-                        // FIXME(eddyb) this is probably excessive, with
-                        // the exception of `union` member accesses.
-                        let ty = Place::ty_from(place.local, proj_base, self.body, self.tcx)
-                            .projection_ty(self.tcx, elem)
-                            .ty;
-                        if ty.is_freeze(self.tcx.at(DUMMY_SP), self.param_env) {
-                            has_mut_interior = false;
-                            break;
-                        }
-
-                        place_projection = proj_base;
-                    }
-                }
+                let has_mut_interior = self.qualif_local::<qualifs::HasMutInterior>(place.local);
                 if has_mut_interior {
                     return Err(Unpromotable);
                 }
@@ -750,7 +692,14 @@ impl<'tcx> Validator<'_, 'tcx> {
     ) -> Result<(), Unpromotable> {
         let fn_ty = callee.ty(self.body, self.tcx);
 
-        if !self.explicit && self.maybe_runtime() {
+        // When doing explicit promotion and inside const/static items, we promote all (eligible) function calls.
+        // Everywhere else, we require `#[rustc_promotable]` on the callee.
+        let promote_all_const_fn = self.explicit
+            || matches!(
+                self.const_kind,
+                Some(hir::ConstContext::Static(_) | hir::ConstContext::Const)
+            );
+        if !promote_all_const_fn {
             if let ty::FnDef(def_id, _) = *fn_ty.kind() {
                 // Never promote runtime `const fn` calls of
                 // functions without `#[rustc_promotable]`.
@@ -764,7 +713,7 @@ impl<'tcx> Validator<'_, 'tcx> {
             ty::FnDef(def_id, _) => {
                 is_const_fn(self.tcx, def_id)
                     || is_unstable_const_fn(self.tcx, def_id).is_some()
-                    || is_lang_panic_fn(self.tcx, self.def_id.to_def_id())
+                    || is_lang_panic_fn(self.tcx, def_id)
             }
             _ => false,
         };
@@ -961,6 +910,7 @@ impl<'a, 'tcx> Promoter<'a, 'tcx> {
                             from_hir_call,
                             fn_span,
                         },
+                        source_info: SourceInfo::outermost(terminator.source_info.span),
                         ..terminator
                     };
                 }
@@ -976,10 +926,10 @@ impl<'a, 'tcx> Promoter<'a, 'tcx> {
 
     fn promote_candidate(
         mut self,
-        def: ty::WithOptConstParam<DefId>,
         candidate: Candidate,
         next_promoted_id: usize,
     ) -> Option<Body<'tcx>> {
+        let def = self.source.source.with_opt_param();
         let mut rvalue = {
             let promoted = &mut self.promoted;
             let promoted_id = Promoted::new(next_promoted_id);
@@ -1139,7 +1089,6 @@ impl<'a, 'tcx> MutVisitor<'tcx> for Promoter<'a, 'tcx> {
 }
 
 pub fn promote_candidates<'tcx>(
-    def: ty::WithOptConstParam<DefId>,
     body: &mut Body<'tcx>,
     tcx: TyCtxt<'tcx>,
     mut temps: IndexVec<Local, TempState>,
@@ -1172,11 +1121,13 @@ pub fn promote_candidates<'tcx>(
         // Declare return place local so that `mir::Body::new` doesn't complain.
         let initial_locals = iter::once(LocalDecl::new(tcx.types.never, body.span)).collect();
 
-        let mut promoted = Body::new(
+        let mut scope = body.source_scopes[candidate.source_info(body).scope].clone();
+        scope.parent_scope = None;
+
+        let promoted = Body::new(
+            body.source, // `promoted` gets filled in below
             IndexVec::new(),
-            // FIXME: maybe try to filter this to avoid blowing up
-            // memory usage?
-            body.source_scopes.clone(),
+            IndexVec::from_elem_n(scope, 1),
             initial_locals,
             IndexVec::new(),
             0,
@@ -1184,7 +1135,6 @@ pub fn promote_candidates<'tcx>(
             body.span,
             body.generator_kind,
         );
-        promoted.ignore_interior_mut_in_const_validation = true;
 
         let promoter = Promoter {
             promoted,
@@ -1196,7 +1146,8 @@ pub fn promote_candidates<'tcx>(
         };
 
         //FIXME(oli-obk): having a `maybe_push()` method on `IndexVec` might be nice
-        if let Some(promoted) = promoter.promote_candidate(def, candidate, promotions.len()) {
+        if let Some(mut promoted) = promoter.promote_candidate(candidate, promotions.len()) {
+            promoted.source.promoted = Some(promotions.next_index());
             promotions.push(promoted);
         }
     }
@@ -1254,7 +1205,9 @@ crate fn should_suggest_const_in_array_repeat_expressions_attribute<'tcx>(
     debug!(
         "should_suggest_const_in_array_repeat_expressions_flag: def_id={:?} \
             should_promote={:?} feature_flag={:?}",
-        validator.ccx.def_id, should_promote, feature_flag
+        validator.ccx.def_id(),
+        should_promote,
+        feature_flag
     );
     should_promote && !feature_flag
 }

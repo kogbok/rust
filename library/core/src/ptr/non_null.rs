@@ -439,16 +439,16 @@ impl<T> NonNull<[T]> {
     /// ```rust
     /// #![feature(allocator_api, ptr_as_uninit)]
     ///
-    /// use std::alloc::{AllocRef, Layout, Global};
+    /// use std::alloc::{Allocator, Layout, Global};
     /// use std::mem::MaybeUninit;
     /// use std::ptr::NonNull;
     ///
-    /// let memory: NonNull<[u8]> = Global.alloc(Layout::new::<[u8; 32]>())?;
+    /// let memory: NonNull<[u8]> = Global.allocate(Layout::new::<[u8; 32]>())?;
     /// // This is safe as `memory` is valid for reads and writes for `memory.len()` many bytes.
     /// // Note that calling `memory.as_mut()` is not allowed here as the content may be uninitialized.
     /// # #[allow(unused_variables)]
     /// let slice: &mut [MaybeUninit<u8>] = unsafe { memory.as_uninit_slice_mut() };
-    /// # Ok::<_, std::alloc::AllocErr>(())
+    /// # Ok::<_, std::alloc::AllocError>(())
     /// ```
     #[inline]
     #[unstable(feature = "ptr_as_uninit", issue = "75402")]

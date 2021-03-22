@@ -1,10 +1,7 @@
-use crate::{
-    transform::{MirPass, MirSource},
-    util::patch::MirPatch,
-};
+use crate::{transform::MirPass, util::patch::MirPatch};
 use rustc_middle::mir::*;
 use rustc_middle::ty::{Ty, TyCtxt};
-use std::{borrow::Cow, fmt::Debug};
+use std::fmt::Debug;
 
 use super::simplify::simplify_cfg;
 
@@ -28,11 +25,11 @@ use super::simplify::simplify_cfg;
 pub struct EarlyOtherwiseBranch;
 
 impl<'tcx> MirPass<'tcx> for EarlyOtherwiseBranch {
-    fn run_pass(&self, tcx: TyCtxt<'tcx>, source: MirSource<'tcx>, body: &mut Body<'tcx>) {
-        if tcx.sess.opts.debugging_opts.mir_opt_level < 1 {
+    fn run_pass(&self, tcx: TyCtxt<'tcx>, body: &mut Body<'tcx>) {
+        if tcx.sess.opts.debugging_opts.mir_opt_level < 2 {
             return;
         }
-        trace!("running EarlyOtherwiseBranch on {:?}", source);
+        trace!("running EarlyOtherwiseBranch on {:?}", body.source);
         // we are only interested in this bb if the terminator is a switchInt
         let bbs_with_switch =
             body.basic_blocks().iter_enumerated().filter(|(_, bb)| is_switch(bb.terminator()));
@@ -49,6 +46,10 @@ impl<'tcx> MirPass<'tcx> for EarlyOtherwiseBranch {
         let should_cleanup = !opts_to_apply.is_empty();
 
         for opt_to_apply in opts_to_apply {
+            if !tcx.consider_optimizing(|| format!("EarlyOtherwiseBranch {:?}", &opt_to_apply)) {
+                break;
+            }
+
             trace!("SUCCESS: found optimization possibility to apply: {:?}", &opt_to_apply);
 
             let statements_before =
@@ -91,22 +92,24 @@ impl<'tcx> MirPass<'tcx> for EarlyOtherwiseBranch {
             let not_equal_rvalue = Rvalue::BinaryOp(
                 not_equal,
                 Operand::Copy(Place::from(second_discriminant_temp)),
-                Operand::Copy(Place::from(first_descriminant_place)),
+                Operand::Copy(first_descriminant_place),
             );
             patch.add_statement(
                 end_of_block_location,
                 StatementKind::Assign(box (Place::from(not_equal_temp), not_equal_rvalue)),
             );
 
-            let (mut targets_to_jump_to, values_to_jump_to): (Vec<_>, Vec<_>) = opt_to_apply
+            let new_targets = opt_to_apply
                 .infos
                 .iter()
                 .flat_map(|x| x.second_switch_info.targets_with_values.iter())
-                .cloned()
-                .unzip();
+                .cloned();
 
-            // add otherwise case in the end
-            targets_to_jump_to.push(opt_to_apply.infos[0].first_switch_info.otherwise_bb);
+            let targets = SwitchTargets::new(
+                new_targets,
+                opt_to_apply.infos[0].first_switch_info.otherwise_bb,
+            );
+
             // new block that jumps to the correct discriminant case. This block is switched to if the discriminants are equal
             let new_switch_data = BasicBlockData::new(Some(Terminator {
                 source_info: opt_to_apply.infos[0].second_switch_info.discr_source_info,
@@ -114,8 +117,7 @@ impl<'tcx> MirPass<'tcx> for EarlyOtherwiseBranch {
                     // the first and second discriminants are equal, so just pick one
                     discr: Operand::Copy(first_descriminant_place),
                     switch_ty: discr_type,
-                    values: Cow::from(values_to_jump_to),
-                    targets: targets_to_jump_to,
+                    targets,
                 },
             }));
 
@@ -179,7 +181,7 @@ struct SwitchDiscriminantInfo<'tcx> {
     /// The basic block that the otherwise branch points to
     otherwise_bb: BasicBlock,
     /// Target along with the value being branched from. Otherwise is not included
-    targets_with_values: Vec<(BasicBlock, u128)>,
+    targets_with_values: Vec<(u128, BasicBlock)>,
     discr_source_info: SourceInfo,
     /// The place of the discriminant used in the switch
     discr_used_in_switch: Place<'tcx>,
@@ -214,9 +216,10 @@ impl<'a, 'tcx> Helper<'a, 'tcx> {
         let discr = self.find_switch_discriminant_info(bb, switch)?;
 
         // go through each target, finding a discriminant read, and a switch
-        let results = discr.targets_with_values.iter().map(|(target, value)| {
-            self.find_discriminant_switch_pairing(&discr, target.clone(), value.clone())
-        });
+        let results = discr
+            .targets_with_values
+            .iter()
+            .map(|(value, target)| self.find_discriminant_switch_pairing(&discr, *target, *value));
 
         // if the optimization did not apply for one of the targets, then abort
         if results.clone().any(|x| x.is_none()) || results.len() == 0 {
@@ -256,7 +259,7 @@ impl<'a, 'tcx> Helper<'a, 'tcx> {
             }
 
             // check that the value being matched on is the same. The
-            if this_bb_discr_info.targets_with_values.iter().find(|x| x.1 == value).is_none() {
+            if this_bb_discr_info.targets_with_values.iter().find(|x| x.0 == value).is_none() {
                 trace!("NO: values being matched on are not the same");
                 return None;
             }
@@ -273,11 +276,38 @@ impl<'a, 'tcx> Helper<'a, 'tcx> {
             //  ```
             // We check this by seeing that the value of the first discriminant is the only other discriminant value being used as a target in the second switch
             if !(this_bb_discr_info.targets_with_values.len() == 1
-                && this_bb_discr_info.targets_with_values[0].1 == value)
+                && this_bb_discr_info.targets_with_values[0].0 == value)
             {
                 trace!(
                     "NO: The second switch did not have only 1 target (besides otherwise) that had the same value as the value from the first switch that got us here"
                 );
+                return None;
+            }
+
+            // when the second place is a projection of the first one, it's not safe to calculate their discriminant values sequentially.
+            // for example, this should not be optimized:
+            //
+            // ```rust
+            // enum E<'a> { Empty, Some(&'a E<'a>), }
+            // let Some(Some(_)) = e;
+            // ```
+            //
+            // ```mir
+            // bb0: {
+            //   _2 = discriminant(*_1)
+            //   switchInt(_2) -> [...]
+            // }
+            // bb1: {
+            //   _3 = discriminant(*(((*_1) as Some).0: &E))
+            //   switchInt(_3) -> [...]
+            // }
+            // ```
+            let discr_place = discr_info.place_of_adt_discr_read;
+            let this_discr_place = this_bb_discr_info.place_of_adt_discr_read;
+            if discr_place.local == this_discr_place.local
+                && this_discr_place.projection.starts_with(discr_place.projection)
+            {
+                trace!("NO: one target is the projection of another");
                 return None;
             }
 
@@ -299,18 +329,14 @@ impl<'a, 'tcx> Helper<'a, 'tcx> {
         switch: &Terminator<'tcx>,
     ) -> Option<SwitchDiscriminantInfo<'tcx>> {
         match &switch.kind {
-            TerminatorKind::SwitchInt { discr, targets, values, .. } => {
+            TerminatorKind::SwitchInt { discr, targets, .. } => {
                 let discr_local = discr.place()?.as_local()?;
                 // the declaration of the discriminant read. Place of this read is being used in the switch
                 let discr_decl = &self.body.local_decls()[discr_local];
                 let discr_ty = discr_decl.ty;
                 // the otherwise target lies as the last element
-                let otherwise_bb = targets.get(values.len())?.clone();
-                let targets_with_values = targets
-                    .iter()
-                    .zip(values.iter())
-                    .map(|(t, v)| (t.clone(), v.clone()))
-                    .collect();
+                let otherwise_bb = targets.otherwise();
+                let targets_with_values = targets.iter().collect();
 
                 // find the place of the adt where the discriminant is being read from
                 // assume this is the last statement of the block

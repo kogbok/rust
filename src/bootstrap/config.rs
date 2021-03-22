@@ -10,10 +10,11 @@ use std::ffi::OsString;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use crate::cache::{Interned, INTERNER};
-use crate::flags::Flags;
 pub use crate::flags::Subcommand;
+use crate::flags::{Color, Flags};
 use crate::util::exe;
 use build_helper::t;
 use merge::Merge;
@@ -42,6 +43,7 @@ macro_rules! check_ci_llvm {
 /// `config.toml.example`.
 #[derive(Default)]
 pub struct Config {
+    pub changelog_seen: Option<usize>,
     pub ccache: Option<String>,
     /// Call Build::ninja() instead of this.
     pub ninja_in_file: bool,
@@ -60,17 +62,20 @@ pub struct Config {
     pub profiler: bool,
     pub ignore_git: bool,
     pub exclude: Vec<PathBuf>,
+    pub include_default_paths: bool,
     pub rustc_error_format: Option<String>,
     pub json_output: bool,
     pub test_compare_mode: bool,
-    pub llvm_libunwind: bool,
-
-    pub skip_only_host_steps: bool,
+    pub llvm_libunwind: Option<LlvmLibunwind>,
+    pub color: Color,
 
     pub on_fail: Option<String>,
     pub stage: u32,
     pub keep_stage: Vec<u32>,
+    pub keep_stage_std: Vec<u32>,
     pub src: PathBuf,
+    // defaults to `config.toml`
+    pub config: PathBuf,
     pub jobs: Option<u32>,
     pub cmd: Subcommand,
     pub incremental: bool,
@@ -95,6 +100,7 @@ pub struct Config {
     pub llvm_version_suffix: Option<String>,
     pub llvm_use_linker: Option<String>,
     pub llvm_allow_old_toolchain: Option<bool>,
+    pub llvm_polly: Option<bool>,
     pub llvm_from_ci: bool,
 
     pub use_lld: bool,
@@ -117,6 +123,7 @@ pub struct Config {
     pub rust_debuginfo_level_std: u32,
     pub rust_debuginfo_level_tools: u32,
     pub rust_debuginfo_level_tests: u32,
+    pub rust_run_dsymutil: bool,
     pub rust_rpath: bool,
     pub rustc_parallel: bool,
     pub rustc_default_linker: Option<String>,
@@ -127,6 +134,8 @@ pub struct Config {
     pub rust_thin_lto_import_instr_limit: Option<u32>,
     pub rust_remap_debuginfo: bool,
     pub rust_new_symbol_mangling: bool,
+    pub rust_profile_use: Option<String>,
+    pub rust_profile_generate: Option<String>,
 
     pub build: TargetSelection,
     pub hosts: Vec<TargetSelection>,
@@ -146,6 +155,7 @@ pub struct Config {
     // misc
     pub low_priority: bool,
     pub channel: String,
+    pub description: Option<String>,
     pub verbose_tests: bool,
     pub save_toolstates: Option<PathBuf>,
     pub print_step_timings: bool,
@@ -172,6 +182,32 @@ pub struct Config {
     pub initial_rustc: PathBuf,
     pub initial_rustfmt: Option<PathBuf>,
     pub out: PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LlvmLibunwind {
+    No,
+    InTree,
+    System,
+}
+
+impl Default for LlvmLibunwind {
+    fn default() -> Self {
+        Self::No
+    }
+}
+
+impl FromStr for LlvmLibunwind {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "no" => Ok(Self::No),
+            "in-tree" => Ok(Self::InTree),
+            "system" => Ok(Self::System),
+            invalid => Err(format!("Invalid value '{}' for rust.llvm-libunwind config.", invalid)),
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -248,6 +284,8 @@ pub struct Target {
     pub ranlib: Option<PathBuf>,
     pub linker: Option<PathBuf>,
     pub ndk: Option<PathBuf>,
+    pub sanitizers: Option<bool>,
+    pub profiler: Option<bool>,
     pub crt_static: Option<bool>,
     pub musl_root: Option<PathBuf>,
     pub musl_libdir: Option<PathBuf>,
@@ -273,6 +311,7 @@ impl Target {
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 struct TomlConfig {
+    changelog_seen: Option<usize>,
     build: Option<Build>,
     install: Option<Install>,
     llvm: Option<Llvm>,
@@ -283,7 +322,10 @@ struct TomlConfig {
 }
 
 impl Merge for TomlConfig {
-    fn merge(&mut self, TomlConfig { build, install, llvm, rust, dist, target, profile: _ }: Self) {
+    fn merge(
+        &mut self,
+        TomlConfig { build, install, llvm, rust, dist, target, profile: _, changelog_seen: _ }: Self,
+    ) {
         fn do_merge<T: Merge>(x: &mut Option<T>, y: Option<T>) {
             if let Some(new) = y {
                 if let Some(original) = x {
@@ -384,7 +426,8 @@ struct Llvm {
     use_libcxx: Option<bool>,
     use_linker: Option<String>,
     allow_old_toolchain: Option<bool>,
-    download_ci_llvm: Option<bool>,
+    polly: Option<bool>,
+    download_ci_llvm: Option<StringOrBool>,
 }
 
 #[derive(Deserialize, Default, Clone, Merge)]
@@ -426,11 +469,13 @@ struct Rust {
     debuginfo_level_std: Option<u32>,
     debuginfo_level_tools: Option<u32>,
     debuginfo_level_tests: Option<u32>,
+    run_dsymutil: Option<bool>,
     backtrace: Option<bool>,
     incremental: Option<bool>,
     parallel_compiler: Option<bool>,
     default_linker: Option<String>,
     channel: Option<String>,
+    description: Option<String>,
     musl_root: Option<String>,
     rpath: Option<bool>,
     verbose_tests: Option<bool>,
@@ -450,9 +495,11 @@ struct Rust {
     remap_debuginfo: Option<bool>,
     jemalloc: Option<bool>,
     test_compare_mode: Option<bool>,
-    llvm_libunwind: Option<bool>,
+    llvm_libunwind: Option<String>,
     control_flow_guard: Option<bool>,
     new_symbol_mangling: Option<bool>,
+    profile_generate: Option<String>,
+    profile_use: Option<String>,
 }
 
 /// TOML representation of how each build target is configured.
@@ -467,6 +514,8 @@ struct TomlTarget {
     llvm_config: Option<String>,
     llvm_filecheck: Option<String>,
     android_ndk: Option<String>,
+    sanitizers: Option<bool>,
+    profiler: Option<bool>,
     crt_static: Option<bool>,
     musl_root: Option<String>,
     musl_libdir: Option<String>,
@@ -508,7 +557,7 @@ impl Config {
         config.deny_warnings = true;
         config.missing_tools = false;
 
-        // set by bootstrap.py
+        // set by build.rs
         config.build = TargetSelection::from_user(&env!("BUILD_TRIPLE"));
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         // Undo `src/bootstrap`
@@ -526,6 +575,7 @@ impl Config {
 
         let mut config = Config::default_opts();
         config.exclude = flags.exclude;
+        config.include_default_paths = flags.include_default_paths;
         config.rustc_error_format = flags.rustc_error_format;
         config.json_output = flags.json_output;
         config.on_fail = flags.on_fail;
@@ -534,7 +584,9 @@ impl Config {
         config.incremental = flags.incremental;
         config.dry_run = flags.dry_run;
         config.keep_stage = flags.keep_stage;
+        config.keep_stage_std = flags.keep_stage_std;
         config.bindir = "bin".into(); // default
+        config.color = flags.color;
         if let Some(value) = flags.deny_warnings {
             config.deny_warnings = value;
         }
@@ -548,10 +600,10 @@ impl Config {
         #[cfg(test)]
         let get_toml = |_| TomlConfig::default();
         #[cfg(not(test))]
-        let get_toml = |file: PathBuf| {
+        let get_toml = |file: &Path| {
             use std::process;
 
-            let contents = t!(fs::read_to_string(&file), "configuration file did not exist");
+            let contents = t!(fs::read_to_string(file), "`include` config not found");
             match toml::from_str(&contents) {
                 Ok(table) => table,
                 Err(err) => {
@@ -561,23 +613,23 @@ impl Config {
             }
         };
 
-        let mut toml = flags.config.map(get_toml).unwrap_or_else(TomlConfig::default);
+        let mut toml = flags.config.as_deref().map(get_toml).unwrap_or_else(TomlConfig::default);
         if let Some(include) = &toml.profile {
             let mut include_path = config.src.clone();
             include_path.push("src");
             include_path.push("bootstrap");
             include_path.push("defaults");
-            include_path.push(format!("config.toml.{}", include));
-            let included_toml = get_toml(include_path);
+            include_path.push(format!("config.{}.toml", include));
+            let included_toml = get_toml(&include_path);
             toml.merge(included_toml);
         }
 
-        let build = toml.build.unwrap_or_default();
+        config.changelog_seen = toml.changelog_seen;
+        if let Some(cfg) = flags.config {
+            config.config = cfg;
+        }
 
-        // If --target was specified but --host wasn't specified, don't run any host-only tests.
-        let has_hosts = build.host.is_some() || flags.host.is_some();
-        let has_targets = build.target.is_some() || flags.target.is_some();
-        config.skip_only_host_steps = !has_hosts && has_targets;
+        let build = toml.build.unwrap_or_default();
 
         config.hosts = if let Some(arg_host) = flags.host {
             arg_host
@@ -635,6 +687,7 @@ impl Config {
             | Subcommand::Clippy { .. }
             | Subcommand::Fix { .. }
             | Subcommand::Run { .. }
+            | Subcommand::Setup { .. }
             | Subcommand::Format { .. } => flags.stage.unwrap_or(0),
         };
 
@@ -659,6 +712,7 @@ impl Config {
                 | Subcommand::Clippy { .. }
                 | Subcommand::Fix { .. }
                 | Subcommand::Run { .. }
+                | Subcommand::Setup { .. }
                 | Subcommand::Format { .. } => {}
             }
         }
@@ -724,7 +778,15 @@ impl Config {
             set(&mut config.llvm_use_libcxx, llvm.use_libcxx);
             config.llvm_use_linker = llvm.use_linker.clone();
             config.llvm_allow_old_toolchain = llvm.allow_old_toolchain;
-            config.llvm_from_ci = llvm.download_ci_llvm.unwrap_or(false);
+            config.llvm_polly = llvm.polly;
+            config.llvm_from_ci = match llvm.download_ci_llvm {
+                Some(StringOrBool::String(s)) => {
+                    assert!(s == "if-available", "unknown option `{}` for download-ci-llvm", s);
+                    config.build.triple == "x86_64-unknown-linux-gnu"
+                }
+                Some(StringOrBool::Bool(b)) => b,
+                None => false,
+            };
 
             if config.llvm_from_ci {
                 // None of the LLVM options, except assertions, are supported
@@ -750,6 +812,7 @@ impl Config {
                 check_ci_llvm!(llvm.use_libcxx);
                 check_ci_llvm!(llvm.use_linker);
                 check_ci_llvm!(llvm.allow_old_toolchain);
+                check_ci_llvm!(llvm.polly);
 
                 // CI-built LLVM is shared
                 config.llvm_link_shared = true;
@@ -773,6 +836,7 @@ impl Config {
             debuginfo_level_std = rust.debuginfo_level_std;
             debuginfo_level_tools = rust.debuginfo_level_tools;
             debuginfo_level_tests = rust.debuginfo_level_tests;
+            config.rust_run_dsymutil = rust.run_dsymutil.unwrap_or(false);
             optimize = rust.optimize;
             ignore_git = rust.ignore_git;
             set(&mut config.rust_new_symbol_mangling, rust.new_symbol_mangling);
@@ -781,9 +845,12 @@ impl Config {
             set(&mut config.rust_rpath, rust.rpath);
             set(&mut config.jemalloc, rust.jemalloc);
             set(&mut config.test_compare_mode, rust.test_compare_mode);
-            set(&mut config.llvm_libunwind, rust.llvm_libunwind);
+            config.llvm_libunwind = rust
+                .llvm_libunwind
+                .map(|v| v.parse().expect("failed to parse rust.llvm-libunwind"));
             set(&mut config.backtrace, rust.backtrace);
             set(&mut config.channel, rust.channel);
+            config.description = rust.description;
             set(&mut config.rust_dist_src, rust.dist_src);
             set(&mut config.verbose_tests, rust.verbose_tests);
             // in the case "false" is set explicitly, do not overwrite the command line args
@@ -811,6 +878,11 @@ impl Config {
 
             config.rust_codegen_units = rust.codegen_units.map(threads_from_config);
             config.rust_codegen_units_std = rust.codegen_units_std.map(threads_from_config);
+            config.rust_profile_use = flags.rust_profile_use.or(rust.profile_use);
+            config.rust_profile_generate = flags.rust_profile_generate.or(rust.profile_generate);
+        } else {
+            config.rust_profile_use = flags.rust_profile_use;
+            config.rust_profile_generate = flags.rust_profile_generate;
         }
 
         if let Some(t) = toml.target {
@@ -839,6 +911,8 @@ impl Config {
                 target.musl_libdir = cfg.musl_libdir.map(PathBuf::from);
                 target.wasi_root = cfg.wasi_root.map(PathBuf::from);
                 target.qemu_rootfs = cfg.qemu_rootfs.map(PathBuf::from);
+                target.sanitizers = cfg.sanitizers;
+                target.profiler = cfg.profiler;
 
                 config.target_config.insert(TargetSelection::from_user(&triple), target);
             }
@@ -866,11 +940,18 @@ impl Config {
             set(&mut config.missing_tools, t.missing_tools);
         }
 
-        // Cargo does not provide a RUSTFMT environment variable, so we
-        // synthesize it manually. Note that we also later check the config.toml
-        // and set this to that path if necessary.
-        let rustfmt = config.initial_rustc.with_file_name(exe("rustfmt", config.build));
-        config.initial_rustfmt = if rustfmt.exists() { Some(rustfmt) } else { None };
+        config.initial_rustfmt = config.initial_rustfmt.or_else({
+            let build = config.build;
+            let initial_rustc = &config.initial_rustc;
+
+            move || {
+                // Cargo does not provide a RUSTFMT environment variable, so we
+                // synthesize it manually.
+                let rustfmt = initial_rustc.with_file_name(exe("rustfmt", build));
+
+                if rustfmt.exists() { Some(rustfmt) } else { None }
+            }
+        });
 
         // Now that we've reached the end of our configuration, infer the
         // default values for all options that we haven't otherwise stored yet.
@@ -939,6 +1020,22 @@ impl Config {
 
     pub fn very_verbose(&self) -> bool {
         self.verbose > 1
+    }
+
+    pub fn sanitizers_enabled(&self, target: TargetSelection) -> bool {
+        self.target_config.get(&target).map(|t| t.sanitizers).flatten().unwrap_or(self.sanitizers)
+    }
+
+    pub fn any_sanitizers_enabled(&self) -> bool {
+        self.target_config.values().any(|t| t.sanitizers == Some(true)) || self.sanitizers
+    }
+
+    pub fn profiler_enabled(&self, target: TargetSelection) -> bool {
+        self.target_config.get(&target).map(|t| t.profiler).flatten().unwrap_or(self.profiler)
+    }
+
+    pub fn any_profiler_enabled(&self) -> bool {
+        self.target_config.values().any(|t| t.profiler == Some(true)) || self.profiler
     }
 
     pub fn llvm_enabled(&self) -> bool {

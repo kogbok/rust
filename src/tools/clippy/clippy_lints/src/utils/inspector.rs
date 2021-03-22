@@ -109,7 +109,7 @@ impl<'tcx> LateLintPass<'tcx> for DeepCodeInspector {
     }
 
     fn check_stmt(&mut self, cx: &LateContext<'tcx>, stmt: &'tcx hir::Stmt<'_>) {
-        if !has_attr(cx.sess(), stmt.kind.attrs()) {
+        if !has_attr(cx.sess(), stmt.kind.attrs(|id| cx.tcx.hir().item(id.id))) {
             return;
         }
         match stmt.kind {
@@ -293,7 +293,7 @@ fn print_expr(cx: &LateContext<'_>, expr: &hir::Expr<'_>, indent: usize) {
             println!("{}template: {}", ind, InlineAsmTemplatePiece::to_string(asm.template));
             println!("{}options: {:?}", ind, asm.options);
             println!("{}operands:", ind);
-            for op in asm.operands {
+            for (op, _op_sp) in asm.operands {
                 match op {
                     hir::InlineAsmOperand::In { expr, .. }
                     | hir::InlineAsmOperand::InOut { expr, .. }
@@ -337,6 +337,11 @@ fn print_expr(cx: &LateContext<'_>, expr: &hir::Expr<'_>, indent: usize) {
                 println!("{}base:", ind);
                 print_expr(cx, base, indent + 1);
             }
+        },
+        hir::ExprKind::ConstBlock(ref anon_const) => {
+            println!("{}ConstBlock", ind);
+            println!("{}anon_const:", ind);
+            print_expr(cx, &cx.tcx.hir().body(anon_const.body).value, indent + 1);
         },
         hir::ExprKind::Repeat(ref val, ref anon_const) => {
             println!("{}Repeat", ind);
@@ -390,7 +395,7 @@ fn print_item(cx: &LateContext<'_>, item: &hir::Item<'_>) {
             println!("function of type {:#?}", item_ty);
         },
         hir::ItemKind::Mod(..) => println!("module"),
-        hir::ItemKind::ForeignMod(ref fm) => println!("foreign module with abi: {}", fm.abi),
+        hir::ItemKind::ForeignMod { abi, .. } => println!("foreign module with abi: {}", abi),
         hir::ItemKind::GlobalAsm(ref asm) => println!("global asm: {:?}", asm),
         hir::ItemKind::TyAlias(..) => {
             println!("type alias for {:?}", cx.tcx.type_of(did));
@@ -553,6 +558,11 @@ fn print_guard(cx: &LateContext<'_>, guard: &hir::Guard<'_>, indent: usize) {
     match guard {
         hir::Guard::If(expr) => {
             println!("{}If", ind);
+            print_expr(cx, expr, indent + 1);
+        },
+        hir::Guard::IfLet(pat, expr) => {
+            println!("{}IfLet", ind);
+            print_pat(cx, pat, indent + 1);
             print_expr(cx, expr, indent + 1);
         },
     }

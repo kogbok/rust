@@ -1,5 +1,5 @@
 // ignore-tidy-linelength
-// compile-flags: -Z mir-opt-level=3
+// compile-flags: -Z mir-opt-level=3 -Zunsound-mir-opts
 
 // example from #68867
 type CSSFloat = f32;
@@ -12,7 +12,7 @@ pub enum ViewportPercentageLength {
 }
 
 // EMIT_MIR early_otherwise_branch_68867.try_sum.EarlyOtherwiseBranch.diff
-// EMIT_MIR early_otherwise_branch_68867.try_sum EarlyOtherwiseBranch.before SimplifyBranches-after-copy-prop.after
+// EMIT_MIR early_otherwise_branch_68867.try_sum EarlyOtherwiseBranch.before SimplifyBranches-final.after
 #[no_mangle]
 pub extern "C" fn try_sum(
     x: &ViewportPercentageLength,

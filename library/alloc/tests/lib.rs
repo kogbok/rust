@@ -1,6 +1,7 @@
 #![feature(allocator_api)]
 #![feature(box_syntax)]
 #![feature(cow_is_borrowed)]
+#![feature(const_cow_is_borrowed)]
 #![feature(drain_filter)]
 #![feature(exact_size_is_empty)]
 #![feature(new_uninit)]
@@ -19,6 +20,7 @@
 #![feature(inplace_iteration)]
 #![feature(iter_map_while)]
 #![feature(int_bits_const)]
+#![feature(vecdeque_binary_search)]
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};

@@ -35,7 +35,7 @@ where
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T: Eq> Eq for [T] {}
 
-/// Implements comparison of vectors lexicographically.
+/// Implements comparison of vectors [lexicographically](Ord#lexicographical-comparison).
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T: Ord> Ord for [T] {
     fn cmp(&self, other: &[T]) -> Ordering {
@@ -43,7 +43,7 @@ impl<T: Ord> Ord for [T] {
     }
 }
 
-/// Implements comparison of vectors lexicographically.
+/// Implements comparison of vectors [lexicographically](Ord#lexicographical-comparison).
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T: PartialOrd> PartialOrd for [T] {
     fn partial_cmp(&self, other: &[T]) -> Option<Ordering> {
@@ -268,12 +268,14 @@ where
 }
 
 impl SliceContains for u8 {
+    #[inline]
     fn slice_contains(&self, x: &[Self]) -> bool {
         memchr::memchr(*self, x).is_some()
     }
 }
 
 impl SliceContains for i8 {
+    #[inline]
     fn slice_contains(&self, x: &[Self]) -> bool {
         let byte = *self as u8;
         // SAFETY: `i8` and `u8` have the same memory layout, thus casting `x.as_ptr()`

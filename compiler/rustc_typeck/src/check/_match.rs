@@ -9,6 +9,7 @@ use rustc_trait_selection::opaque_types::InferCtxtExt as _;
 use rustc_trait_selection::traits::query::evaluate_obligation::InferCtxtExt;
 use rustc_trait_selection::traits::{
     IfExpressionCause, MatchExpressionArmCause, ObligationCause, ObligationCauseCode,
+    StatementAsExpression,
 };
 
 impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
@@ -30,7 +31,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             _ => (false, false, false),
         };
 
-        // Type check the descriminant and get its type.
+        // Type check the discriminant and get its type.
         let scrutinee_ty = if force_scrutinee_bool {
             // Here we want to ensure:
             //
@@ -42,7 +43,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             // FIXME(60707): Consider removing hack with principled solution.
             self.check_expr_has_type_or_error(scrut, self.tcx.types.bool, |_| {})
         } else {
-            self.demand_scrutinee_type(arms, scrut)
+            self.demand_scrutinee_type(scrut, arms_contain_ref_bindings(arms), arms.is_empty())
         };
 
         // If there are no arms, that is a diverging match; a special case.
@@ -97,7 +98,15 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                 self.diverges.set(Diverges::Maybe);
                 match g {
                     hir::Guard::If(e) => {
-                        self.check_expr_has_type_or_error(e, tcx.types.bool, |_| {})
+                        self.check_expr_has_type_or_error(e, tcx.types.bool, |_| {});
+                    }
+                    hir::Guard::IfLet(pat, e) => {
+                        let scrutinee_ty = self.demand_scrutinee_type(
+                            e,
+                            pat.contains_explicit_ref_binding(),
+                            false,
+                        );
+                        self.check_pat_top(&pat, scrutinee_ty, None, true);
                     }
                 };
             }
@@ -130,7 +139,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                         id,
                         self.body_id,
                         self.param_env,
-                        &ty,
+                        ty,
                         arm.body.span,
                     );
                     let mut suggest_box = !impl_trait_ret_ty.obligations.is_empty();
@@ -188,11 +197,8 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                     }
                 }
             } else {
-                let (arm_span, semi_span) = if let hir::ExprKind::Block(blk, _) = &arm.body.kind {
-                    self.find_block_span(blk, prior_arm_ty)
-                } else {
-                    (arm.body.span, None)
-                };
+                let (arm_span, semi_span) =
+                    self.get_appropriate_arm_semicolon_removal_span(&arms, i, prior_arm_ty, arm_ty);
                 let (span, code) = match i {
                     // The reason for the first arm to fail is not that the match arms diverge,
                     // but rather that there's a prior obligation that doesn't hold.
@@ -201,6 +207,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                         expr.span,
                         ObligationCauseCode::MatchExpressionArm(box MatchExpressionArmCause {
                             arm_span,
+                            scrut_span: scrut.span,
                             semi_span,
                             source: match_src,
                             prior_arms: other_arms.clone(),
@@ -239,6 +246,28 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         self.diverges.set(scrut_diverges | all_arms_diverge);
 
         coercion.complete(self)
+    }
+
+    fn get_appropriate_arm_semicolon_removal_span(
+        &self,
+        arms: &'tcx [hir::Arm<'tcx>],
+        i: usize,
+        prior_arm_ty: Option<Ty<'tcx>>,
+        arm_ty: Ty<'tcx>,
+    ) -> (Span, Option<(Span, StatementAsExpression)>) {
+        let arm = &arms[i];
+        let (arm_span, mut semi_span) = if let hir::ExprKind::Block(blk, _) = &arm.body.kind {
+            self.find_block_span(blk, prior_arm_ty)
+        } else {
+            (arm.body.span, None)
+        };
+        if semi_span.is_none() && i > 0 {
+            if let hir::ExprKind::Block(blk, _) = &arms[i - 1].body.kind {
+                let (_, semi_span_prev) = self.find_block_span(blk, Some(arm_ty));
+                semi_span = semi_span_prev;
+            }
+        }
+        (arm_span, semi_span)
     }
 
     /// When the previously checked expression (the scrutinee) diverges,
@@ -429,8 +458,9 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
 
     fn demand_scrutinee_type(
         &self,
-        arms: &'tcx [hir::Arm<'tcx>],
         scrut: &'tcx hir::Expr<'tcx>,
+        contains_ref_bindings: Option<hir::Mutability>,
+        no_arms: bool,
     ) -> Ty<'tcx> {
         // Not entirely obvious: if matches may create ref bindings, we want to
         // use the *precise* type of the scrutinee, *not* some supertype, as
@@ -484,17 +514,9 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         // (once introduced) is populated by the time we get here.
         //
         // See #44848.
-        let contains_ref_bindings = arms
-            .iter()
-            .filter_map(|a| a.pat.contains_explicit_ref_binding())
-            .max_by_key(|m| match *m {
-                hir::Mutability::Mut => 1,
-                hir::Mutability::Not => 0,
-            });
-
         if let Some(m) = contains_ref_bindings {
             self.check_expr_with_needs(scrut, Needs::maybe_mut_place(m))
-        } else if arms.is_empty() {
+        } else if no_arms {
             self.check_expr(scrut)
         } else {
             // ...but otherwise we want to use any supertype of the
@@ -513,7 +535,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         &self,
         block: &'tcx hir::Block<'tcx>,
         expected_ty: Option<Ty<'tcx>>,
-    ) -> (Span, Option<Span>) {
+    ) -> (Span, Option<(Span, StatementAsExpression)>) {
         if let Some(expr) = &block.expr {
             (expr.span, None)
         } else if let Some(stmt) = block.stmts.last() {
@@ -524,4 +546,11 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             (block.span, None)
         }
     }
+}
+
+fn arms_contain_ref_bindings(arms: &'tcx [hir::Arm<'tcx>]) -> Option<hir::Mutability> {
+    arms.iter().filter_map(|a| a.pat.contains_explicit_ref_binding()).max_by_key(|m| match *m {
+        hir::Mutability::Mut => 1,
+        hir::Mutability::Not => 0,
+    })
 }

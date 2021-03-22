@@ -233,7 +233,7 @@ use crate::{convert, fmt};
 
 /// `Result` is a type that represents either success ([`Ok`]) or failure ([`Err`]).
 ///
-/// See the [`std::result`](index.html) module documentation for details.
+/// See the [module documentation](self) for details.
 #[derive(Copy, PartialEq, PartialOrd, Eq, Ord, Debug, Hash)]
 #[must_use = "this `Result` may be an `Err` variant, which should be handled"]
 #[rustc_diagnostic_item = "result_type"]
@@ -1184,7 +1184,9 @@ impl<T, E> Result<Result<T, E>, E> {
     /// Converts from `Result<Result<T, E>, E>` to `Result<T, E>`
     ///
     /// # Examples
+    ///
     /// Basic usage:
+    ///
     /// ```
     /// #![feature(result_flattening)]
     /// let x: Result<Result<&'static str, u32>, u32> = Ok(Ok("hello"));
@@ -1197,7 +1199,7 @@ impl<T, E> Result<Result<T, E>, E> {
     /// assert_eq!(Err(6), x.flatten());
     /// ```
     ///
-    /// Flattening once only removes one level of nesting:
+    /// Flattening only removes one level of nesting at a time:
     ///
     /// ```
     /// #![feature(result_flattening)]

@@ -70,10 +70,23 @@
 //! }
 //! ```
 //!
-//! This usage of [`Option`] to create safe nullable pointers is so
-//! common that Rust does special optimizations to make the
-//! representation of [`Option`]`<`[`Box<T>`]`>` a single pointer. Optional pointers
-//! in Rust are stored as efficiently as any other pointer type.
+//! # Representation
+//!
+//! Rust guarantees to optimize the following types `T` such that
+//! [`Option<T>`] has the same size as `T`:
+//!
+//! * [`Box<U>`]
+//! * `&U`
+//! * `&mut U`
+//! * `fn`, `extern "C" fn`
+//! * [`num::NonZero*`]
+//! * [`ptr::NonNull<U>`]
+//! * `#[repr(transparent)]` struct around one of the types in this list.
+//!
+//! It is further guaranteed that, for the cases above, one can
+//! [`mem::transmute`] from all valid values of `T` to `Option<T>` and
+//! from `Some::<T>(_)` to `T` (but transmuting `None::<T>` to `T`
+//! is undefined behaviour).
 //!
 //! # Examples
 //!
@@ -128,6 +141,9 @@
 //! ```
 //!
 //! [`Box<T>`]: ../../std/boxed/struct.Box.html
+//! [`Box<U>`]: ../../std/boxed/struct.Box.html
+//! [`num::NonZero*`]: crate::num
+//! [`ptr::NonNull<U>`]: crate::ptr::NonNull
 
 #![stable(feature = "rust1", since = "1.0.0")]
 
@@ -546,6 +562,36 @@ impl<T> Option<T> {
         }
     }
 
+    /// Inserts `value` into the option then returns a mutable reference to it.
+    ///
+    /// If the option already contains a value, the old value is dropped.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// #![feature(option_insert)]
+    ///
+    /// let mut opt = None;
+    /// let val = opt.insert(1);
+    /// assert_eq!(*val, 1);
+    /// assert_eq!(opt.unwrap(), 1);
+    /// let val = opt.insert(2);
+    /// assert_eq!(*val, 2);
+    /// *val = 3;
+    /// assert_eq!(opt.unwrap(), 3);
+    /// ```
+    #[inline]
+    #[unstable(feature = "option_insert", reason = "newly added", issue = "78271")]
+    pub fn insert(&mut self, value: T) -> &mut T {
+        *self = Some(value);
+
+        match self {
+            Some(v) => v,
+            // SAFETY: the code above just filled the option
+            None => unsafe { hint::unreachable_unchecked() },
+        }
+    }
+
     /////////////////////////////////////////////////////////////////////////
     // Iterator constructors
     /////////////////////////////////////////////////////////////////////////
@@ -671,6 +717,7 @@ impl<T> Option<T> {
     /// assert_eq!(Some(4).filter(is_even), Some(4));
     /// ```
     ///
+    /// [`Some(t)`]: Some
     #[inline]
     #[stable(feature = "option_filter", since = "1.27.0")]
     pub fn filter<P: FnOnce(&T) -> bool>(self, predicate: P) -> Self {
@@ -775,7 +822,7 @@ impl<T> Option<T> {
     // Entry-like operations to insert if None and return a reference
     /////////////////////////////////////////////////////////////////////////
 
-    /// Inserts `v` into the option if it is [`None`], then
+    /// Inserts `value` into the option if it is [`None`], then
     /// returns a mutable reference to the contained value.
     ///
     /// # Examples
@@ -794,12 +841,12 @@ impl<T> Option<T> {
     /// ```
     #[inline]
     #[stable(feature = "option_entry", since = "1.20.0")]
-    pub fn get_or_insert(&mut self, v: T) -> &mut T {
-        self.get_or_insert_with(|| v)
+    pub fn get_or_insert(&mut self, value: T) -> &mut T {
+        self.get_or_insert_with(|| value)
     }
 
-    /// Inserts a value computed from `f` into the option if it is [`None`], then
-    /// returns a mutable reference to the contained value.
+    /// Inserts a value computed from `f` into the option if it is [`None`],
+    /// then returns a mutable reference to the contained value.
     ///
     /// # Examples
     ///
@@ -822,8 +869,8 @@ impl<T> Option<T> {
             *self = Some(f());
         }
 
-        match *self {
-            Some(ref mut v) => v,
+        match self {
+            Some(v) => v,
             // SAFETY: a `None` variant for `self` would have been replaced by a `Some`
             // variant in the code above.
             None => unsafe { hint::unreachable_unchecked() },
@@ -1648,7 +1695,9 @@ impl<T> Option<Option<T>> {
     /// Converts from `Option<Option<T>>` to `Option<T>`
     ///
     /// # Examples
+    ///
     /// Basic usage:
+    ///
     /// ```
     /// let x: Option<Option<u32>> = Some(Some(6));
     /// assert_eq!(Some(6), x.flatten());
@@ -1659,7 +1708,9 @@ impl<T> Option<Option<T>> {
     /// let x: Option<Option<u32>> = None;
     /// assert_eq!(None, x.flatten());
     /// ```
-    /// Flattening once only removes one level of nesting:
+    ///
+    /// Flattening only removes one level of nesting at a time:
+    ///
     /// ```
     /// let x: Option<Option<Option<u32>>> = Some(Some(Some(6)));
     /// assert_eq!(Some(Some(6)), x.flatten());

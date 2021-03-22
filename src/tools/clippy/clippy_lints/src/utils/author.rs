@@ -130,7 +130,7 @@ impl<'tcx> LateLintPass<'tcx> for Author {
     }
 
     fn check_stmt(&mut self, cx: &LateContext<'tcx>, stmt: &'tcx hir::Stmt<'_>) {
-        if !has_attr(cx.sess(), stmt.kind.attrs()) {
+        if !has_attr(cx.sess(), stmt.kind.attrs(|id| cx.tcx.hir().item(id.id))) {
             return;
         }
         prelude();
@@ -372,6 +372,18 @@ impl<'tcx> Visitor<'tcx> for PrintVisitor {
                                 self.current = if_expr_pat;
                                 self.visit_expr(if_expr);
                             },
+                            hir::Guard::IfLet(ref if_let_pat, ref if_let_expr) => {
+                                let if_let_pat_pat = self.next("pat");
+                                let if_let_expr_pat = self.next("expr");
+                                println!(
+                                    "    if let Guard::IfLet(ref {}, ref {}) = {};",
+                                    if_let_pat_pat, if_let_expr_pat, guard_pat
+                                );
+                                self.current = if_let_expr_pat;
+                                self.visit_expr(if_let_expr);
+                                self.current = if_let_pat_pat;
+                                self.visit_pat(if_let_pat);
+                            },
                         }
                     }
                     self.current = format!("{}[{}].pat", arms_pat, i);
@@ -505,6 +517,11 @@ impl<'tcx> Visitor<'tcx> for PrintVisitor {
                 self.print_qpath(path);
                 println!("    if {}.len() == {};", fields_pat, fields.len());
                 println!("    // unimplemented: field checks");
+            },
+            ExprKind::ConstBlock(_) => {
+                let value_pat = self.next("value");
+                println!("Const({})", value_pat);
+                self.current = value_pat;
             },
             // FIXME: compute length (needs type info)
             ExprKind::Repeat(ref value, _) => {
@@ -725,6 +742,7 @@ fn desugaring_name(des: hir::MatchSource) -> String {
             "MatchSource::IfLetDesugar {{ contains_else_clause: {} }}",
             contains_else_clause
         ),
+        hir::MatchSource::IfLetGuardDesugar => "MatchSource::IfLetGuardDesugar".to_string(),
         hir::MatchSource::IfDesugar { contains_else_clause } => format!(
             "MatchSource::IfDesugar {{ contains_else_clause: {} }}",
             contains_else_clause

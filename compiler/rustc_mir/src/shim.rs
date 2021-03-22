@@ -78,8 +78,6 @@ fn make_shim<'tcx>(tcx: TyCtxt<'tcx>, instance: ty::InstanceDef<'tcx>) -> Body<'
     run_passes(
         tcx,
         &mut result,
-        instance,
-        None,
         MirPhase::Const,
         &[&[
             &add_moves_for_packed_drops::AddMovesForPackedDrops,
@@ -137,7 +135,7 @@ fn build_drop_shim<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, ty: Option<Ty<'tcx>>)
     // Check if this is a generator, if so, return the drop glue for it
     if let Some(&ty::Generator(gen_def_id, substs, _)) = ty.map(|ty| ty.kind()) {
         let body = &**tcx.optimized_mir(gen_def_id).generator_drop.as_ref().unwrap();
-        return body.subst(tcx, substs);
+        return body.clone().subst(tcx, substs);
     }
 
     let substs = if let Some(ty) = ty {
@@ -146,7 +144,7 @@ fn build_drop_shim<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, ty: Option<Ty<'tcx>>)
         InternalSubsts::identity_for_item(tcx, def_id)
     };
     let sig = tcx.fn_sig(def_id).subst(tcx, substs);
-    let sig = tcx.erase_late_bound_regions(&sig);
+    let sig = tcx.erase_late_bound_regions(sig);
     let span = tcx.def_span(def_id);
 
     let source_info = SourceInfo::outermost(span);
@@ -163,7 +161,9 @@ fn build_drop_shim<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, ty: Option<Ty<'tcx>>)
     block(&mut blocks, TerminatorKind::Goto { target: return_block });
     block(&mut blocks, TerminatorKind::Return);
 
-    let mut body = new_body(blocks, local_decls_for_sig(&sig, span), sig.inputs().len(), span);
+    let source = MirSource::from_instance(ty::InstanceDef::DropGlue(def_id, ty));
+    let mut body =
+        new_body(source, blocks, local_decls_for_sig(&sig, span), sig.inputs().len(), span);
 
     if let Some(..) = ty {
         // The first argument (index 0), but add 1 for the return value.
@@ -202,15 +202,23 @@ fn build_drop_shim<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, ty: Option<Ty<'tcx>>)
 }
 
 fn new_body<'tcx>(
+    source: MirSource<'tcx>,
     basic_blocks: IndexVec<BasicBlock, BasicBlockData<'tcx>>,
     local_decls: IndexVec<Local, LocalDecl<'tcx>>,
     arg_count: usize,
     span: Span,
 ) -> Body<'tcx> {
     Body::new(
+        source,
         basic_blocks,
         IndexVec::from_elem_n(
-            SourceScopeData { span, parent_scope: None, local_data: ClearCrossCrate::Clear },
+            SourceScopeData {
+                span,
+                parent_scope: None,
+                inlined: None,
+                inlined_parent_scope: None,
+                local_data: ClearCrossCrate::Clear,
+            },
             1,
         ),
         local_decls,
@@ -300,10 +308,7 @@ fn build_clone_shim<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, self_ty: Ty<'tcx>) -
 
     match self_ty.kind() {
         _ if is_copy => builder.copy_shim(),
-        ty::Array(ty, len) => {
-            let len = len.eval_usize(tcx, param_env);
-            builder.array_shim(dest, src, ty, len)
-        }
+        ty::Array(ty, len) => builder.array_shim(dest, src, ty, len),
         ty::Closure(_, substs) => {
             builder.tuple_like_shim(dest, src, substs.as_closure().upvar_tys())
         }
@@ -330,7 +335,7 @@ impl CloneShimBuilder<'tcx> {
         // or access fields of a Place of type TySelf.
         let substs = tcx.mk_substs_trait(self_ty, &[]);
         let sig = tcx.fn_sig(def_id).subst(tcx, substs);
-        let sig = tcx.erase_late_bound_regions(&sig);
+        let sig = tcx.erase_late_bound_regions(sig);
         let span = tcx.def_span(def_id);
 
         CloneShimBuilder {
@@ -344,7 +349,11 @@ impl CloneShimBuilder<'tcx> {
     }
 
     fn into_mir(self) -> Body<'tcx> {
-        new_body(self.blocks, self.local_decls, self.sig.inputs().len(), self.span)
+        let source = MirSource::from_instance(ty::InstanceDef::CloneShim(
+            self.def_id,
+            self.sig.inputs_and_output[0],
+        ));
+        new_body(source, self.blocks, self.local_decls, self.sig.inputs().len(), self.span)
     }
 
     fn source_info(&self) -> SourceInfo {
@@ -473,7 +482,13 @@ impl CloneShimBuilder<'tcx> {
         }
     }
 
-    fn array_shim(&mut self, dest: Place<'tcx>, src: Place<'tcx>, ty: Ty<'tcx>, len: u64) {
+    fn array_shim(
+        &mut self,
+        dest: Place<'tcx>,
+        src: Place<'tcx>,
+        ty: Ty<'tcx>,
+        len: &'tcx ty::Const<'tcx>,
+    ) {
         let tcx = self.tcx;
         let span = self.span;
 
@@ -491,7 +506,11 @@ impl CloneShimBuilder<'tcx> {
             ))),
             self.make_statement(StatementKind::Assign(box (
                 end,
-                Rvalue::Use(Operand::Constant(self.make_usize(len))),
+                Rvalue::Use(Operand::Constant(box Constant {
+                    span: self.span,
+                    user_ty: None,
+                    literal: len,
+                })),
             ))),
         ];
         self.block(inits, TerminatorKind::Goto { target: BasicBlock::new(1) }, false);
@@ -644,7 +663,7 @@ fn build_call_shim<'tcx>(
     // to substitute into the signature of the shim. It is not necessary for users of this
     // MIR body to perform further substitutions (see `InstanceDef::has_polymorphic_mir_body`).
     let (sig_substs, untuple_args) = if let ty::InstanceDef::FnPtrShim(_, ty) = instance {
-        let sig = tcx.erase_late_bound_regions(&ty.fn_sig(tcx));
+        let sig = tcx.erase_late_bound_regions(ty.fn_sig(tcx));
 
         let untuple_args = sig.inputs();
 
@@ -659,7 +678,7 @@ fn build_call_shim<'tcx>(
 
     let def_id = instance.def_id();
     let sig = tcx.fn_sig(def_id);
-    let mut sig = tcx.erase_late_bound_regions(&sig);
+    let mut sig = tcx.erase_late_bound_regions(sig);
 
     assert_eq!(sig_substs.is_some(), !instance.has_polymorphic_mir_body());
     if let Some(sig_substs) = sig_substs {
@@ -834,7 +853,8 @@ fn build_call_shim<'tcx>(
         block(&mut blocks, vec![], TerminatorKind::Resume, true);
     }
 
-    let mut body = new_body(blocks, local_decls, sig.inputs().len(), span);
+    let mut body =
+        new_body(MirSource::from_instance(instance), blocks, local_decls, sig.inputs().len(), span);
 
     if let Abi::RustCall = sig.abi {
         body.spread_arg = Some(Local::new(sig.inputs().len()));
@@ -897,18 +917,16 @@ pub fn build_adt_ctor(tcx: TyCtxt<'_>, ctor_id: DefId) -> Body<'_> {
         is_cleanup: false,
     };
 
-    let body =
-        new_body(IndexVec::from_elem_n(start_block, 1), local_decls, sig.inputs().len(), span);
-
-    crate::util::dump_mir(
-        tcx,
-        None,
-        "mir_map",
-        &0,
-        crate::transform::MirSource::item(ctor_id),
-        &body,
-        |_, _| Ok(()),
+    let source = MirSource::item(ctor_id);
+    let body = new_body(
+        source,
+        IndexVec::from_elem_n(start_block, 1),
+        local_decls,
+        sig.inputs().len(),
+        span,
     );
+
+    crate::util::dump_mir(tcx, None, "mir_map", &0, &body, |_, _| Ok(()));
 
     body
 }

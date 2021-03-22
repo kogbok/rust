@@ -440,6 +440,32 @@ impl f64 {
         self.abs_private() < Self::INFINITY
     }
 
+    /// Returns `true` if the number is [subnormal].
+    ///
+    /// ```
+    /// #![feature(is_subnormal)]
+    /// let min = f64::MIN_POSITIVE; // 2.2250738585072014e-308_f64
+    /// let max = f64::MAX;
+    /// let lower_than_min = 1.0e-308_f64;
+    /// let zero = 0.0_f64;
+    ///
+    /// assert!(!min.is_subnormal());
+    /// assert!(!max.is_subnormal());
+    ///
+    /// assert!(!zero.is_subnormal());
+    /// assert!(!f64::NAN.is_subnormal());
+    /// assert!(!f64::INFINITY.is_subnormal());
+    /// // Values between `0` and `min` are Subnormal.
+    /// assert!(lower_than_min.is_subnormal());
+    /// ```
+    /// [subnormal]: https://en.wikipedia.org/wiki/Denormal_number
+    #[unstable(feature = "is_subnormal", issue = "79288")]
+    #[rustc_const_unstable(feature = "const_float_classify", issue = "72505")]
+    #[inline]
+    pub const fn is_subnormal(self) -> bool {
+        matches!(self.classify(), FpCategory::Subnormal)
+    }
+
     /// Returns `true` if the number is neither zero, infinite,
     /// [subnormal], or `NaN`.
     ///
@@ -787,6 +813,35 @@ impl f64 {
         self.to_bits().to_ne_bytes()
     }
 
+    /// Return the memory representation of this floating point number as a byte array in
+    /// native byte order.
+    ///
+    /// [`to_ne_bytes`] should be preferred over this whenever possible.
+    ///
+    /// [`to_ne_bytes`]: #method.to_ne_bytes
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// #![feature(num_as_ne_bytes)]
+    /// let num = 12.5f64;
+    /// let bytes = num.as_ne_bytes();
+    /// assert_eq!(
+    ///     bytes,
+    ///     if cfg!(target_endian = "big") {
+    ///         &[0x40, 0x29, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+    ///     } else {
+    ///         &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x29, 0x40]
+    ///     }
+    /// );
+    /// ```
+    #[unstable(feature = "num_as_ne_bytes", issue = "76976")]
+    #[inline]
+    pub fn as_ne_bytes(&self) -> &[u8; 8] {
+        // SAFETY: `f64` is a plain old datatype so we can always transmute to it
+        unsafe { &*(self as *const Self as *const _) }
+    }
+
     /// Create a floating point value from its representation as a byte array in big endian.
     ///
     /// # Examples
@@ -861,6 +916,10 @@ impl f64 {
     /// - Positive signaling NaN
     /// - Positive quiet NaN
     ///
+    /// Note that this function does not always agree with the [`PartialOrd`]
+    /// and [`PartialEq`] implementations of `f64`. In particular, they regard
+    /// negative and positive zero as equal, while `total_cmp` doesn't.
+    ///
     /// # Example
     /// ```
     /// #![feature(total_cmp)]
@@ -915,5 +974,40 @@ impl f64 {
         right ^= (((right >> 63) as u64) >> 1) as i64;
 
         left.cmp(&right)
+    }
+
+    /// Restrict a value to a certain interval unless it is NaN.
+    ///
+    /// Returns `max` if `self` is greater than `max`, and `min` if `self` is
+    /// less than `min`. Otherwise this returns `self`.
+    ///
+    /// Note that this function returns NaN if the initial value was NaN as
+    /// well.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `min > max`, `min` is NaN, or `max` is NaN.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert!((-3.0f64).clamp(-2.0, 1.0) == -2.0);
+    /// assert!((0.0f64).clamp(-2.0, 1.0) == 0.0);
+    /// assert!((2.0f64).clamp(-2.0, 1.0) == 1.0);
+    /// assert!((f64::NAN).clamp(-2.0, 1.0).is_nan());
+    /// ```
+    #[must_use = "method returns a new number and does not mutate the original value"]
+    #[stable(feature = "clamp", since = "1.50.0")]
+    #[inline]
+    pub fn clamp(self, min: f64, max: f64) -> f64 {
+        assert!(min <= max);
+        let mut x = self;
+        if x < min {
+            x = min;
+        }
+        if x > max {
+            x = max;
+        }
+        x
     }
 }

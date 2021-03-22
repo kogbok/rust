@@ -32,6 +32,7 @@ pub enum AutoTraitResult<A> {
     NegativeImpl,
 }
 
+#[allow(dead_code)]
 impl<A> AutoTraitResult<A> {
     fn is_auto(&self) -> bool {
         match *self {
@@ -96,7 +97,7 @@ impl<'tcx> AutoTraitFinder<'tcx> {
             ));
 
             match result {
-                Ok(Some(ImplSource::ImplSourceUserDefined(_))) => {
+                Ok(Some(ImplSource::UserDefined(_))) => {
                     debug!(
                         "find_auto_trait_generics({:?}): \
                          manual impl found, bailing out",
@@ -303,11 +304,8 @@ impl AutoTraitFinder<'tcx> {
 
             // Call `infcx.resolve_vars_if_possible` to see if we can
             // get rid of any inference variables.
-            let obligation = infcx.resolve_vars_if_possible(&Obligation::new(
-                dummy_cause.clone(),
-                new_env,
-                pred,
-            ));
+            let obligation =
+                infcx.resolve_vars_if_possible(Obligation::new(dummy_cause.clone(), new_env, pred));
             let result = select.select(&obligation);
 
             match &result {
@@ -315,9 +313,8 @@ impl AutoTraitFinder<'tcx> {
                     // If we see an explicit negative impl (e.g., `impl !Send for MyStruct`),
                     // we immediately bail out, since it's impossible for us to continue.
 
-                    if let ImplSource::ImplSourceUserDefined(ImplSourceUserDefinedData {
-                        impl_def_id,
-                        ..
+                    if let ImplSource::UserDefined(ImplSourceUserDefinedData {
+                        impl_def_id, ..
                     }) = impl_source
                     {
                         // Blame 'tidy' for the weird bracket placement.
@@ -627,7 +624,7 @@ impl AutoTraitFinder<'tcx> {
                 fresh_preds.insert(self.clean_pred(select.infcx(), obligation.predicate));
 
             // Resolve any inference variables that we can, to help selection succeed
-            let predicate = select.infcx().resolve_vars_if_possible(&obligation.predicate);
+            let predicate = select.infcx().resolve_vars_if_possible(obligation.predicate);
 
             // We only add a predicate as a user-displayable bound if
             // it involves a generic parameter, and doesn't contain
@@ -642,7 +639,8 @@ impl AutoTraitFinder<'tcx> {
             // We check this by calling is_of_param on the relevant types
             // from the various possible predicates
 
-            match predicate.skip_binders() {
+            let bound_predicate = predicate.bound_atom();
+            match bound_predicate.skip_binder() {
                 ty::PredicateAtom::Trait(p, _) => {
                     if self.is_param_no_infer(p.trait_ref.substs)
                         && !only_projections
@@ -650,10 +648,10 @@ impl AutoTraitFinder<'tcx> {
                     {
                         self.add_user_pred(computed_preds, predicate);
                     }
-                    predicates.push_back(ty::Binder::bind(p));
+                    predicates.push_back(bound_predicate.rebind(p));
                 }
                 ty::PredicateAtom::Projection(p) => {
-                    let p = ty::Binder::bind(p);
+                    let p = bound_predicate.rebind(p);
                     debug!(
                         "evaluate_nested_obligations: examining projection predicate {:?}",
                         predicate
@@ -783,13 +781,13 @@ impl AutoTraitFinder<'tcx> {
                     }
                 }
                 ty::PredicateAtom::RegionOutlives(binder) => {
-                    let binder = ty::Binder::bind(binder);
+                    let binder = bound_predicate.rebind(binder);
                     if select.infcx().region_outlives_predicate(&dummy_cause, binder).is_err() {
                         return false;
                     }
                 }
                 ty::PredicateAtom::TypeOutlives(binder) => {
-                    let binder = ty::Binder::bind(binder);
+                    let binder = bound_predicate.rebind(binder);
                     match (
                         binder.no_bound_vars(),
                         binder.map_bound_ref(|pred| pred.0).no_bound_vars(),

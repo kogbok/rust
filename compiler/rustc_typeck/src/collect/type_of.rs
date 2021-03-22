@@ -79,7 +79,13 @@ pub(super) fn opt_const_param_of(tcx: TyCtxt<'_>, def_id: LocalDefId) -> Option<
                         let _tables = tcx.typeck(body_owner);
                         &*path
                     }
-                    _ => span_bug!(DUMMY_SP, "unexpected const parent path {:?}", parent_node),
+                    _ => {
+                        tcx.sess.delay_span_bug(
+                            tcx.def_span(def_id),
+                            &format!("unexpected const parent path {:?}", parent_node),
+                        );
+                        return None;
+                    }
                 };
 
                 // We've encountered an `AnonConst` in some path, so we need to
@@ -112,12 +118,16 @@ pub(super) fn opt_const_param_of(tcx: TyCtxt<'_>, def_id: LocalDefId) -> Option<
                         tcx.sess.delay_span_bug(tcx.def_span(def_id), "anon const with Res::Err");
                         return None;
                     }
-                    _ => span_bug!(
-                        DUMMY_SP,
-                        "unexpected anon const res {:?} in path: {:?}",
-                        res,
-                        path,
-                    ),
+                    _ => {
+                        // If the user tries to specify generics on a type that does not take them,
+                        // e.g. `usize<T>`, we may hit this branch, in which case we treat it as if
+                        // no arguments have been passed. An error should already have been emitted.
+                        tcx.sess.delay_span_bug(
+                            tcx.def_span(def_id),
+                            &format!("unexpected anon const res {:?} in path: {:?}", res, path),
+                        );
+                        return None;
+                    }
                 };
 
                 generics
@@ -249,7 +259,7 @@ pub(super) fn type_of(tcx: TyCtxt<'_>, def_id: DefId) -> Ty<'_> {
                 ItemKind::Trait(..)
                 | ItemKind::TraitAlias(..)
                 | ItemKind::Mod(..)
-                | ItemKind::ForeignMod(..)
+                | ItemKind::ForeignMod { .. }
                 | ItemKind::GlobalAsm(..)
                 | ItemKind::ExternCrate(..)
                 | ItemKind::Use(..) => {
@@ -307,6 +317,12 @@ pub(super) fn type_of(tcx: TyCtxt<'_>, def_id: DefId) -> Ty<'_> {
                     if constant.hir_id == hir_id =>
                 {
                     tcx.types.usize
+                }
+
+                Node::Expr(&Expr { kind: ExprKind::ConstBlock(ref anon_const), .. })
+                    if anon_const.hir_id == hir_id =>
+                {
+                    tcx.typeck(def_id).node_type(anon_const.hir_id)
                 }
 
                 Node::Variant(Variant { disr_expr: Some(ref e), .. }) if e.hir_id == hir_id => tcx
@@ -621,7 +637,7 @@ fn infer_placeholder_type(
     }
 
     // Typeck doesn't expect erased regions to be returned from `type_of`.
-    tcx.fold_regions(&ty, &mut false, |r, _| match r {
+    tcx.fold_regions(ty, &mut false, |r, _| match r {
         ty::ReErased => tcx.lifetimes.re_static,
         _ => r,
     })

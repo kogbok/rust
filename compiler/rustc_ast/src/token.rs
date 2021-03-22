@@ -54,16 +54,6 @@ pub enum DelimToken {
     NoDelim,
 }
 
-impl DelimToken {
-    pub fn len(self) -> usize {
-        if self == NoDelim { 0 } else { 1 }
-    }
-
-    pub fn is_empty(self) -> bool {
-        self == NoDelim
-    }
-}
-
 #[derive(Clone, Copy, PartialEq, Encodable, Decodable, Debug, HashStable_Generic)]
 pub enum LitKind {
     Bool, // AST only, must never appear in a `Token`
@@ -163,6 +153,7 @@ pub fn ident_can_begin_expr(name: Symbol, span: Span, is_raw: bool) -> bool {
             kw::Do,
             kw::Box,
             kw::Break,
+            kw::Const,
             kw::Continue,
             kw::False,
             kw::For,
@@ -312,6 +303,13 @@ impl TokenKind {
             _ => None,
         }
     }
+
+    pub fn should_end_const_arg(&self) -> bool {
+        match self {
+            Gt | Ge | BinOp(Shr) | BinOpEq(Shr) => true,
+            _ => false,
+        }
+    }
 }
 
 impl Token {
@@ -436,7 +434,7 @@ impl Token {
             || self == &OpenDelim(Paren)
     }
 
-    /// Returns `true` if the token is any literal
+    /// Returns `true` if the token is any literal.
     pub fn is_lit(&self) -> bool {
         match self.kind {
             Literal(..) => true,
@@ -787,13 +785,20 @@ impl Nonterminal {
     /// See issue #73345 for more details.
     /// FIXME(#73933): Remove this eventually.
     pub fn pretty_printing_compatibility_hack(&self) -> bool {
-        if let NtItem(item) = self {
-            let name = item.ident.name;
-            if name == sym::ProceduralMasqueradeDummyType || name == sym::ProcMacroHack {
-                if let ast::ItemKind::Enum(enum_def, _) = &item.kind {
-                    if let [variant] = &*enum_def.variants {
-                        return variant.ident.name == sym::Input;
-                    }
+        let item = match self {
+            NtItem(item) => item,
+            NtStmt(stmt) => match &stmt.kind {
+                ast::StmtKind::Item(item) => item,
+                _ => return false,
+            },
+            _ => return false,
+        };
+
+        let name = item.ident.name;
+        if name == sym::ProceduralMasqueradeDummyType || name == sym::ProcMacroHack {
+            if let ast::ItemKind::Enum(enum_def, _) = &item.kind {
+                if let [variant] = &*enum_def.variants {
+                    return variant.ident.name == sym::Input;
                 }
             }
         }
@@ -810,10 +815,10 @@ impl Nonterminal {
             if let ExpnKind::Macro(_, macro_name) = orig_span.ctxt().outer_expn_data().kind {
                 let filename = source_map.span_to_filename(orig_span);
                 if let FileName::Real(RealFileName::Named(path)) = filename {
-                    let matches_prefix = |prefix| {
-                        // Check for a path that ends with 'prefix*/src/lib.rs'
+                    let matches_prefix = |prefix, filename| {
+                        // Check for a path that ends with 'prefix*/src/<filename>'
                         let mut iter = path.components().rev();
-                        iter.next().and_then(|p| p.as_os_str().to_str()) == Some("lib.rs")
+                        iter.next().and_then(|p| p.as_os_str().to_str()) == Some(filename)
                             && iter.next().and_then(|p| p.as_os_str().to_str()) == Some("src")
                             && iter
                                 .next()
@@ -821,11 +826,22 @@ impl Nonterminal {
                                 .map_or(false, |p| p.starts_with(prefix))
                     };
 
-                    if (macro_name == sym::impl_macros && matches_prefix("time-macros-impl"))
-                        || (macro_name == sym::arrays && matches_prefix("js-sys"))
+                    if (macro_name == sym::impl_macros
+                        && matches_prefix("time-macros-impl", "lib.rs"))
+                        || (macro_name == sym::arrays && matches_prefix("js-sys", "lib.rs"))
                     {
                         let snippet = source_map.span_to_snippet(orig_span);
                         if snippet.as_deref() == Ok("$name") {
+                            return Some((*ident, *is_raw));
+                        }
+                    }
+
+                    if macro_name == sym::tuple_from_req
+                        && (matches_prefix("actix-web", "extract.rs")
+                            || matches_prefix("actori-web", "extract.rs"))
+                    {
+                        let snippet = source_map.span_to_snippet(orig_span);
+                        if snippet.as_deref() == Ok("$T") {
                             return Some((*ident, *is_raw));
                         }
                     }

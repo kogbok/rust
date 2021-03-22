@@ -133,7 +133,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                         .replace_bound_vars_with_fresh_vars(
                             call_expr.span,
                             infer::FnCall,
-                            &closure_sig,
+                            closure_sig,
                         )
                         .0;
                     let adjustments = self.adjust_steps(autoderef);
@@ -285,10 +285,8 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         arg_exprs: &'tcx [hir::Expr<'tcx>],
         expected: Expectation<'tcx>,
     ) -> Ty<'tcx> {
-        let (fn_sig, def_span) = match *callee_ty.kind() {
-            ty::FnDef(def_id, _) => {
-                (callee_ty.fn_sig(self.tcx), self.tcx.hir().span_if_local(def_id))
-            }
+        let (fn_sig, def_id) = match *callee_ty.kind() {
+            ty::FnDef(def_id, _) => (callee_ty.fn_sig(self.tcx), Some(def_id)),
             ty::FnPtr(sig) => (sig, None),
             ref t => {
                 let mut unit_variant = None;
@@ -391,7 +389,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                 // In that case, we check each argument against "error" in order to
                 // set up all the node type bindings.
                 (
-                    ty::Binder::bind(self.tcx.mk_fn_sig(
+                    ty::Binder::dummy(self.tcx.mk_fn_sig(
                         self.err_args(arg_exprs.len()).into_iter(),
                         self.tcx.ty_error(),
                         false,
@@ -409,8 +407,8 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         // previously appeared within a `Binder<>` and hence would not
         // have been normalized before.
         let fn_sig =
-            self.replace_bound_vars_with_fresh_vars(call_expr.span, infer::FnCall, &fn_sig).0;
-        let fn_sig = self.normalize_associated_types_in(call_expr.span, &fn_sig);
+            self.replace_bound_vars_with_fresh_vars(call_expr.span, infer::FnCall, fn_sig).0;
+        let fn_sig = self.normalize_associated_types_in(call_expr.span, fn_sig);
 
         // Call the generic checker.
         let expected_arg_tys = self.expected_inputs_for_expected_output(
@@ -427,7 +425,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             arg_exprs,
             fn_sig.c_variadic,
             TupleArgumentsFlag::DontTupleArguments,
-            def_span,
+            def_id,
         );
 
         fn_sig.output()

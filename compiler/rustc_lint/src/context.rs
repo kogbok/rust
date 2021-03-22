@@ -19,10 +19,9 @@ use self::TargetLint::*;
 use crate::levels::LintLevelsBuilder;
 use crate::passes::{EarlyLintPassObject, LateLintPassObject};
 use rustc_ast as ast;
-use rustc_ast::util::lev_distance::find_best_match_for_name;
 use rustc_data_structures::fx::FxHashMap;
 use rustc_data_structures::sync;
-use rustc_errors::{struct_span_err, Applicability};
+use rustc_errors::{add_elided_lifetime_in_path_suggestion, struct_span_err, Applicability};
 use rustc_hir as hir;
 use rustc_hir::def::Res;
 use rustc_hir::def_id::{CrateNum, DefId};
@@ -33,11 +32,14 @@ use rustc_middle::middle::stability;
 use rustc_middle::ty::layout::{LayoutError, TyAndLayout};
 use rustc_middle::ty::print::with_no_trimmed_paths;
 use rustc_middle::ty::{self, print::Printer, subst::GenericArg, Ty, TyCtxt};
-use rustc_session::lint::{add_elided_lifetime_in_path_suggestion, BuiltinLintDiagnostics};
+use rustc_session::lint::BuiltinLintDiagnostics;
 use rustc_session::lint::{FutureIncompatibleInfo, Level, Lint, LintBuffer, LintId};
 use rustc_session::Session;
+use rustc_session::SessionLintStore;
+use rustc_span::lev_distance::find_best_match_for_name;
 use rustc_span::{symbol::Symbol, MultiSpan, Span, DUMMY_SP};
 use rustc_target::abi::LayoutOf;
+use tracing::debug;
 
 use std::cell::Cell;
 use std::slice;
@@ -67,6 +69,20 @@ pub struct LintStore {
 
     /// Map of registered lint groups to what lints they expand to.
     lint_groups: FxHashMap<&'static str, LintGroup>,
+}
+
+impl SessionLintStore for LintStore {
+    fn name_to_lint(&self, lint_name: &str) -> LintId {
+        let lints = self
+            .find_lints(lint_name)
+            .unwrap_or_else(|_| panic!("Failed to find lint with name `{}`", lint_name));
+
+        if let &[lint] = lints.as_slice() {
+            return lint;
+        } else {
+            panic!("Found mutliple lints with name `{}`: {:?}", lint_name, lints);
+        }
+    }
 }
 
 /// The target of the `by_name` map, which accounts for renaming/deprecation.
@@ -320,6 +336,20 @@ impl LintStore {
         }
     }
 
+    /// True if this symbol represents a lint group name.
+    pub fn is_lint_group(&self, lint_name: Symbol) -> bool {
+        debug!(
+            "is_lint_group(lint_name={:?}, lint_groups={:?})",
+            lint_name,
+            self.lint_groups.keys().collect::<Vec<_>>()
+        );
+        let lint_name_str = &*lint_name.as_str();
+        self.lint_groups.contains_key(&lint_name_str) || {
+            let warnings_name_str = crate::WARNINGS.name_lower();
+            lint_name_str == &*warnings_name_str
+        }
+    }
+
     /// Checks the name of a lint for its existence, and whether it was
     /// renamed or removed. Generates a DiagnosticBuilder containing a
     /// warning for renamed and removed lints. This is over both lint
@@ -396,7 +426,7 @@ impl LintStore {
                         self.by_name.keys().map(|name| Symbol::intern(&name)).collect::<Vec<_>>();
 
                     let suggestion = find_best_match_for_name(
-                        symbols.iter(),
+                        &symbols,
                         Symbol::intern(&lint_name.to_lowercase()),
                         None,
                     );
@@ -543,7 +573,7 @@ pub trait LintContext: Sized {
                     anon_lts,
                 ) => {
                     add_elided_lifetime_in_path_suggestion(
-                        sess,
+                        sess.source_map(),
                         &mut db,
                         n,
                         path_span,
@@ -711,10 +741,6 @@ impl<'tcx> LateContext<'tcx> {
         }
     }
 
-    pub fn current_lint_root(&self) -> hir::HirId {
-        self.last_node_with_lint_attrs
-    }
-
     /// Check if a `DefId`'s path matches the given absolute type path usage.
     ///
     /// Anonymous scopes such as `extern` imports are matched with `kw::Invalid`;
@@ -775,7 +801,7 @@ impl<'tcx> LateContext<'tcx> {
 
             fn print_dyn_existential(
                 self,
-                _predicates: &'tcx ty::List<ty::ExistentialPredicate<'tcx>>,
+                _predicates: &'tcx ty::List<ty::Binder<ty::ExistentialPredicate<'tcx>>>,
             ) -> Result<Self::DynExistential, Self::Error> {
                 Ok(())
             }
@@ -846,7 +872,7 @@ impl<'tcx> LateContext<'tcx> {
                     return Ok(path);
                 }
 
-                path.push(disambiguated_data.data.as_symbol());
+                path.push(Symbol::intern(&disambiguated_data.data.to_string()));
                 Ok(path)
             }
 

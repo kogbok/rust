@@ -25,7 +25,6 @@ declare_clippy_lint! {
     /// **Example:**
     /// ```rust
     /// # let x = 1;
-    ///
     /// // Bad
     /// let x = &x;
     ///
@@ -75,7 +74,9 @@ declare_clippy_lint! {
     /// names to bindings or introducing more scopes to contain the bindings.
     ///
     /// **Known problems:** This lint, as the other shadowing related lints,
-    /// currently only catches very simple patterns.
+    /// currently only catches very simple patterns. Note that
+    /// `allow`/`warn`/`deny`/`forbid` attributes only work on the function level
+    /// for this lint.
     ///
     /// **Example:**
     /// ```rust
@@ -341,6 +342,10 @@ fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'_>, bindings: &mut
                 if let Some(ref guard) = arm.guard {
                     match guard {
                         Guard::If(if_expr) => check_expr(cx, if_expr, bindings),
+                        Guard::IfLet(guard_pat, guard_expr) => {
+                            check_pat(cx, guard_pat, Some(*guard_expr), guard_pat.span, bindings);
+                            check_expr(cx, guard_expr, bindings);
+                        },
                     }
                 }
                 check_expr(cx, &arm.body, bindings);

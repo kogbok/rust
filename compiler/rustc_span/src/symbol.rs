@@ -13,7 +13,7 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::str;
 
-use crate::{Span, DUMMY_SP, SESSION_GLOBALS};
+use crate::{Edition, Span, DUMMY_SP, SESSION_GLOBALS};
 
 #[cfg(test)]
 mod tests;
@@ -110,7 +110,7 @@ symbols! {
     // called `sym::proc_macro` because then it's easy to mistakenly think it
     // represents "proc_macro".
     //
-    // As well as the symbols listed, there are symbols for the the strings
+    // As well as the symbols listed, there are symbols for the strings
     // "0", "1", ..., "9", which are accessible via `sym::integer`.
     //
     // The proc macro will abort if symbols are not in alphabetical order (as
@@ -127,6 +127,7 @@ symbols! {
         ArgumentV1,
         Arguments,
         C,
+        CString,
         Center,
         Clone,
         Copy,
@@ -212,6 +213,7 @@ symbols! {
         _d,
         _e,
         _task_context,
+        a32,
         aarch64_target_feature,
         abi,
         abi_amdgpu_kernel,
@@ -256,13 +258,16 @@ symbols! {
         arbitrary_enum_discriminant,
         arbitrary_self_types,
         arith_offset,
+        arm,
         arm_target_feature,
         array,
         arrays,
+        as_ptr,
         as_str,
         asm,
         assert,
         assert_inhabited,
+        assert_macro,
         assert_receiver_is_total_eq,
         assert_uninit_valid,
         assert_zero_valid,
@@ -280,6 +285,7 @@ symbols! {
         attr_literals,
         attributes,
         augmented_assignments,
+        auto_traits,
         automatically_derived,
         avx512_target_feature,
         await_macro,
@@ -308,11 +314,13 @@ symbols! {
         breakpoint,
         bridge,
         bswap,
+        c_str,
         c_variadic,
         call,
         call_mut,
         call_once,
         caller_location,
+        capture_disjoint_fields,
         cdylib,
         ceilf32,
         ceilf64,
@@ -321,6 +329,7 @@ symbols! {
         cfg_attr,
         cfg_attr_multi,
         cfg_doctest,
+        cfg_panic,
         cfg_sanitize,
         cfg_target_feature,
         cfg_target_has_atomic,
@@ -333,9 +342,11 @@ symbols! {
         clone,
         clone_closures,
         clone_from,
+        closure,
         closure_to_fn_coercion,
         cmp,
         cmpxchg16b_target_feature,
+        cmse_nonsecure_entry,
         coerce_unsized,
         cold,
         column,
@@ -345,16 +356,20 @@ symbols! {
         concat_idents,
         conservative_impl_trait,
         console,
+        const_allocate,
         const_compare_raw_pointers,
         const_constructor,
         const_eval_limit,
         const_evaluatable_checked,
         const_extern_fn,
         const_fn,
+        const_fn_floating_point_arithmetic,
+        const_fn_fn_ptr_basics,
         const_fn_transmute,
         const_fn_union,
         const_generics,
         const_if_match,
+        const_impl_trait,
         const_in_array_repeat_expressions,
         const_indexing,
         const_let,
@@ -369,6 +384,8 @@ symbols! {
         const_trait_bound_opt_out,
         const_trait_impl,
         const_transmute,
+        constant,
+        constructor,
         contents,
         context,
         convert,
@@ -379,6 +396,7 @@ symbols! {
         copysignf64,
         core,
         core_intrinsics,
+        core_panic_macro,
         cosf32,
         cosf64,
         crate_id,
@@ -388,6 +406,7 @@ symbols! {
         crate_type,
         crate_visibility_modifier,
         crt_dash_static: "crt-static",
+        cstring_type,
         ctlz,
         ctlz_nonzero,
         ctpop,
@@ -401,6 +420,7 @@ symbols! {
         dead_code,
         dealloc,
         debug,
+        debug_assert_macro,
         debug_assertions,
         debug_struct,
         debug_trait,
@@ -409,6 +429,7 @@ symbols! {
         decl_macro,
         declare_lint_pass,
         decode,
+        default_alloc_error_handler,
         default_lib_allocator,
         default_type_parameter_fallback,
         default_type_params,
@@ -420,6 +441,7 @@ symbols! {
         deref_mut,
         deref_target,
         derive,
+        destructuring_assignment,
         diagnostic,
         direct,
         discriminant_kind,
@@ -438,13 +460,9 @@ symbols! {
         document_private_items,
         dotdot_in_tuple_patterns,
         dotdoteq_in_patterns,
-        double_braced_closure: "{{closure}}",
-        double_braced_constant: "{{constant}}",
-        double_braced_constructor: "{{constructor}}",
-        double_braced_crate: "{{crate}}",
-        double_braced_impl: "{{impl}}",
-        double_braced_misc: "{{misc}}",
-        double_braced_opaque: "{{opaque}}",
+        dreg,
+        dreg_low16,
+        dreg_low8,
         drop,
         drop_in_place,
         drop_types_in_const,
@@ -464,6 +482,7 @@ symbols! {
         encode,
         env,
         eq,
+        ermsb_target_feature,
         err,
         exact_div,
         except,
@@ -474,11 +493,13 @@ symbols! {
         existential_type,
         exp2f32,
         exp2f64,
+        expect,
         expected,
         expf32,
         expf64,
         export_name,
         expr,
+        extended_key_value_attributes,
         extern_absolute_paths,
         extern_crate_item_prelude,
         extern_crate_self,
@@ -497,6 +518,7 @@ symbols! {
         fadd_fast,
         fdiv_fast,
         feature,
+        ffi,
         ffi_const,
         ffi_pure,
         ffi_returns_twice,
@@ -525,6 +547,7 @@ symbols! {
         format_args_capture,
         format_args_nl,
         freeze,
+        freg,
         frem_fast,
         from,
         from_desugaring,
@@ -590,12 +613,15 @@ symbols! {
         infer_static_outlives_requirements,
         inlateout,
         inline,
+        inline_const,
         inout,
+        instruction_set,
         intel,
         into_iter,
         into_result,
         intrinsics,
         irrefutable_let_patterns,
+        isa_attribute,
         isize,
         issue,
         issue_5723_bootstrap,
@@ -605,6 +631,7 @@ symbols! {
         iter,
         keyword,
         kind,
+        kreg,
         label,
         label_break_value,
         lang,
@@ -630,6 +657,7 @@ symbols! {
         lint_reasons,
         literal,
         llvm_asm,
+        local,
         local_inner_macros,
         log10f32,
         log10f64,
@@ -679,6 +707,7 @@ symbols! {
         minnumf32,
         minnumf64,
         mips_target_feature,
+        misc,
         module,
         module_path,
         more_struct_aliases,
@@ -770,7 +799,9 @@ symbols! {
         panic_info,
         panic_location,
         panic_runtime,
+        panic_str,
         panic_unwind,
+        panicking,
         param_attrs,
         parent_trait,
         partial_cmp,
@@ -787,6 +818,8 @@ symbols! {
         plugin_registrar,
         plugins,
         pointer,
+        pointer_trait,
+        pointer_trait_fmt,
         poll,
         position,
         post_dash_lto: "post-lto",
@@ -827,6 +860,9 @@ symbols! {
         pub_restricted,
         pure,
         pushpop_unsafe,
+        qreg,
+        qreg_low4,
+        qreg_low8,
         quad_precision_float,
         question_mark,
         quote,
@@ -848,6 +884,13 @@ symbols! {
         reexport_test_harness_main,
         reference,
         reflect,
+        reg,
+        reg16,
+        reg32,
+        reg64,
+        reg_abcd,
+        reg_byte,
+        reg_thumb,
         register_attr,
         register_tool,
         relaxed_adts,
@@ -886,10 +929,11 @@ symbols! {
         rustc,
         rustc_allocator,
         rustc_allocator_nounwind,
-        rustc_allow_const_fn_ptr,
+        rustc_allow_const_fn_unstable,
         rustc_args_required_const,
         rustc_attrs,
         rustc_builtin_macro,
+        rustc_capture_analysis,
         rustc_clean,
         rustc_const_stable,
         rustc_const_unstable,
@@ -1032,6 +1076,8 @@ symbols! {
         spotlight,
         sqrtf32,
         sqrtf64,
+        sreg,
+        sreg_low16,
         sse4a_target_feature,
         stable,
         staged_api,
@@ -1043,6 +1089,7 @@ symbols! {
         staticlib,
         std,
         std_inject,
+        std_panic_macro,
         stmt,
         stmt_expr_attributes,
         stop_after_dataflow,
@@ -1064,6 +1111,7 @@ symbols! {
         sym,
         sync,
         sync_trait,
+        t32,
         target_arch,
         target_endian,
         target_env,
@@ -1071,6 +1119,7 @@ symbols! {
         target_feature,
         target_feature_11,
         target_has_atomic,
+        target_has_atomic_equal_alignment,
         target_has_atomic_load_store,
         target_os,
         target_pointer_width,
@@ -1107,6 +1156,7 @@ symbols! {
         try_trait,
         tt,
         tuple,
+        tuple_from_req,
         tuple_indexing,
         two_phase,
         ty,
@@ -1149,6 +1199,7 @@ symbols! {
         unsafe_cell,
         unsafe_no_drop_flag,
         unsize,
+        unsized_fn_params,
         unsized_locals,
         unsized_tuple_coercion,
         unstable,
@@ -1156,6 +1207,7 @@ symbols! {
         unused_qualifications,
         unwind,
         unwind_attributes,
+        unwrap,
         unwrap_or,
         use_extern_macros,
         use_nested_groups,
@@ -1181,6 +1233,8 @@ symbols! {
         volatile_load,
         volatile_set_memory,
         volatile_store,
+        vreg,
+        vreg_low16,
         warn,
         wasm_import_module,
         wasm_target_feature,
@@ -1192,6 +1246,9 @@ symbols! {
         wrapping_mul,
         wrapping_sub,
         write_bytes,
+        xmm_reg,
+        ymm_reg,
+        zmm_reg,
     }
 }
 
@@ -1330,15 +1387,13 @@ impl fmt::Display for IdentPrinter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.is_raw {
             f.write_str("r#")?;
-        } else {
-            if self.symbol == kw::DollarCrate {
-                if let Some(span) = self.convert_dollar_crate {
-                    let converted = span.ctxt().dollar_crate_name();
-                    if !converted.is_path_segment_keyword() {
-                        f.write_str("::")?;
-                    }
-                    return fmt::Display::fmt(&converted, f);
+        } else if self.symbol == kw::DollarCrate {
+            if let Some(span) = self.convert_dollar_crate {
+                let converted = span.ctxt().dollar_crate_name();
+                if !converted.is_path_segment_keyword() {
+                    f.write_str("::")?;
                 }
+                return fmt::Display::fmt(&converted, f);
             }
         }
         fmt::Display::fmt(&self.symbol, f)
@@ -1412,6 +1467,10 @@ impl Symbol {
 
     pub fn as_u32(self) -> u32 {
         self.0.as_u32()
+    }
+
+    pub fn is_empty(self) -> bool {
+        self == kw::Invalid
     }
 
     /// This method is supposed to be used in error messages, so it's expected to be
@@ -1518,8 +1577,7 @@ impl Interner {
 /// Given that `kw` is imported, use them like `kw::keyword_name`.
 /// For example `kw::Loop` or `kw::Break`.
 pub mod kw {
-    use super::Symbol;
-    keywords!();
+    pub use super::kw_generated::*;
 }
 
 // This module has a very short name because it's used a lot.
@@ -1527,22 +1585,23 @@ pub mod kw {
 ///
 /// Given that `sym` is imported, use them like `sym::symbol_name`.
 /// For example `sym::rustfmt` or `sym::u8`.
-#[allow(rustc::default_hash_types)]
 pub mod sym {
     use super::Symbol;
     use std::convert::TryInto;
 
-    define_symbols!();
+    pub use super::sym_generated::*;
 
     // Used from a macro in `librustc_feature/accepted.rs`
     pub use super::kw::MacroRules as macro_rules;
 
-    // Get the symbol for an integer. The first few non-negative integers each
-    // have a static symbol and therefore are fast.
+    /// Get the symbol for an integer.
+    ///
+    /// The first few non-negative integers each have a static symbol and therefore
+    /// are fast.
     pub fn integer<N: TryInto<usize> + Copy + ToString>(n: N) -> Symbol {
         if let Result::Ok(idx) = n.try_into() {
-            if let Option::Some(&sym_) = digits_array.get(idx) {
-                return sym_;
+            if idx < 10 {
+                return Symbol::new(super::SYMBOL_DIGITS_BASE + idx as u32);
             }
         }
         Symbol::intern(&n.to_string())
@@ -1550,17 +1609,32 @@ pub mod sym {
 }
 
 impl Symbol {
-    fn is_used_keyword_2018(self) -> bool {
-        self >= kw::Async && self <= kw::Dyn
+    fn is_special(self) -> bool {
+        self <= kw::Underscore
     }
 
-    fn is_unused_keyword_2018(self) -> bool {
-        self == kw::Try
+    fn is_used_keyword_always(self) -> bool {
+        self >= kw::As && self <= kw::While
     }
 
-    /// Used for sanity checking rustdoc keyword sections.
-    pub fn is_doc_keyword(self) -> bool {
-        self <= kw::Union
+    fn is_used_keyword_conditional(self, edition: impl FnOnce() -> Edition) -> bool {
+        (self >= kw::Async && self <= kw::Dyn) && edition() >= Edition::Edition2018
+    }
+
+    fn is_unused_keyword_always(self) -> bool {
+        self >= kw::Abstract && self <= kw::Yield
+    }
+
+    fn is_unused_keyword_conditional(self, edition: impl FnOnce() -> Edition) -> bool {
+        self == kw::Try && edition() >= Edition::Edition2018
+    }
+
+    pub fn is_reserved(self, edition: impl Copy + FnOnce() -> Edition) -> bool {
+        self.is_special()
+            || self.is_used_keyword_always()
+            || self.is_unused_keyword_always()
+            || self.is_used_keyword_conditional(edition)
+            || self.is_unused_keyword_conditional(edition)
     }
 
     /// A keyword or reserved identifier that can be used as a path segment.
@@ -1578,7 +1652,7 @@ impl Symbol {
         self == kw::True || self == kw::False
     }
 
-    /// This symbol can be a raw identifier.
+    /// Returns `true` if this symbol can be a raw identifier.
     pub fn can_be_raw(self) -> bool {
         self != kw::Invalid && self != kw::Underscore && !self.is_path_segment_keyword()
     }
@@ -1588,26 +1662,27 @@ impl Ident {
     // Returns `true` for reserved identifiers used internally for elided lifetimes,
     // unnamed method parameters, crate root module, error recovery etc.
     pub fn is_special(self) -> bool {
-        self.name <= kw::Underscore
+        self.name.is_special()
     }
 
     /// Returns `true` if the token is a keyword used in the language.
     pub fn is_used_keyword(self) -> bool {
         // Note: `span.edition()` is relatively expensive, don't call it unless necessary.
-        self.name >= kw::As && self.name <= kw::While
-            || self.name.is_used_keyword_2018() && self.span.rust_2018()
+        self.name.is_used_keyword_always()
+            || self.name.is_used_keyword_conditional(|| self.span.edition())
     }
 
     /// Returns `true` if the token is a keyword reserved for possible future use.
     pub fn is_unused_keyword(self) -> bool {
         // Note: `span.edition()` is relatively expensive, don't call it unless necessary.
-        self.name >= kw::Abstract && self.name <= kw::Yield
-            || self.name.is_unused_keyword_2018() && self.span.rust_2018()
+        self.name.is_unused_keyword_always()
+            || self.name.is_unused_keyword_conditional(|| self.span.edition())
     }
 
     /// Returns `true` if the token is either a special identifier or a keyword.
     pub fn is_reserved(self) -> bool {
-        self.is_special() || self.is_used_keyword() || self.is_unused_keyword()
+        // Note: `span.edition()` is relatively expensive, don't call it unless necessary.
+        self.name.is_reserved(|| self.span.edition())
     }
 
     /// A keyword or reserved identifier that can be used as a path segment.
@@ -1627,7 +1702,7 @@ fn with_interner<T, F: FnOnce(&mut Interner) -> T>(f: F) -> T {
     SESSION_GLOBALS.with(|session_globals| f(&mut *session_globals.symbol_interner.lock()))
 }
 
-/// An alternative to `Symbol`, useful when the chars within the symbol need to
+/// An alternative to [`Symbol`], useful when the chars within the symbol need to
 /// be accessed. It deliberately has limited functionality and should only be
 /// used for temporary values.
 ///

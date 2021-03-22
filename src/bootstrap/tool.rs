@@ -470,7 +470,11 @@ impl Step for Rustdoc {
 
     fn make_run(run: RunConfig<'_>) {
         run.builder.ensure(Rustdoc {
-            compiler: run.builder.compiler(run.builder.top_stage, run.build_triple()),
+            // Note: this is somewhat unique in that we actually want a *target*
+            // compiler here, because rustdoc *is* a compiler. We won't be using
+            // this as the compiler to build with, but rather this is "what
+            // compiler are we producing"?
+            compiler: run.builder.compiler(run.builder.top_stage, run.target),
         });
     }
 
@@ -559,7 +563,7 @@ impl Step for Cargo {
     }
 
     fn run(self, builder: &Builder<'_>) -> PathBuf {
-        builder
+        let cargo_bin_path = builder
             .ensure(ToolBuild {
                 compiler: self.compiler,
                 target: self.target,
@@ -570,7 +574,40 @@ impl Step for Cargo {
                 source_type: SourceType::Submodule,
                 extra_features: Vec::new(),
             })
-            .expect("expected to build -- essential tool")
+            .expect("expected to build -- essential tool");
+
+        let build_cred = |name, path| {
+            // These credential helpers are currently experimental.
+            // Any build failures will be ignored.
+            let _ = builder.ensure(ToolBuild {
+                compiler: self.compiler,
+                target: self.target,
+                tool: name,
+                mode: Mode::ToolRustc,
+                path,
+                is_optional_tool: true,
+                source_type: SourceType::Submodule,
+                extra_features: Vec::new(),
+            });
+        };
+
+        if self.target.contains("windows") {
+            build_cred(
+                "cargo-credential-wincred",
+                "src/tools/cargo/crates/credential/cargo-credential-wincred",
+            );
+        }
+        if self.target.contains("apple-darwin") {
+            build_cred(
+                "cargo-credential-macos-keychain",
+                "src/tools/cargo/crates/credential/cargo-credential-macos-keychain",
+            );
+        }
+        build_cred(
+            "cargo-credential-1password",
+            "src/tools/cargo/crates/credential/cargo-credential-1password",
+        );
+        cargo_bin_path
     }
 }
 

@@ -16,12 +16,13 @@
 use crate::token::{self, DelimToken, Token, TokenKind};
 
 use rustc_data_structures::stable_hasher::{HashStable, StableHasher};
-use rustc_data_structures::sync::Lrc;
+use rustc_data_structures::sync::{self, Lrc};
 use rustc_macros::HashStable_Generic;
+use rustc_serialize::{Decodable, Decoder, Encodable, Encoder};
 use rustc_span::{Span, DUMMY_SP};
 use smallvec::{smallvec, SmallVec};
 
-use std::{iter, mem};
+use std::{fmt, iter, mem};
 
 /// When the main rust parser encounters a syntax-extension invocation, it
 /// parses the arguments to the invocation as a token-tree. This is a very
@@ -119,13 +120,75 @@ where
     }
 }
 
+pub trait CreateTokenStream: sync::Send + sync::Sync {
+    fn add_trailing_semi(&self) -> Box<dyn CreateTokenStream>;
+    fn create_token_stream(&self) -> TokenStream;
+}
+
+impl CreateTokenStream for TokenStream {
+    fn add_trailing_semi(&self) -> Box<dyn CreateTokenStream> {
+        panic!("Cannot call `add_trailing_semi` on a `TokenStream`!");
+    }
+    fn create_token_stream(&self) -> TokenStream {
+        self.clone()
+    }
+}
+
+/// A lazy version of `TokenStream`, which defers creation
+/// of an actual `TokenStream` until it is needed.
+/// `Box` is here only to reduce the structure size.
+#[derive(Clone)]
+pub struct LazyTokenStream(Lrc<Box<dyn CreateTokenStream>>);
+
+impl LazyTokenStream {
+    pub fn new(inner: impl CreateTokenStream + 'static) -> LazyTokenStream {
+        LazyTokenStream(Lrc::new(Box::new(inner)))
+    }
+
+    /// Extends the captured stream by one token,
+    /// which must be a trailing semicolon. This
+    /// affects the `TokenStream` created by `make_tokenstream`.
+    pub fn add_trailing_semi(&self) -> LazyTokenStream {
+        LazyTokenStream(Lrc::new(self.0.add_trailing_semi()))
+    }
+
+    pub fn create_token_stream(&self) -> TokenStream {
+        self.0.create_token_stream()
+    }
+}
+
+impl fmt::Debug for LazyTokenStream {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt("LazyTokenStream", f)
+    }
+}
+
+impl<S: Encoder> Encodable<S> for LazyTokenStream {
+    fn encode(&self, s: &mut S) -> Result<(), S::Error> {
+        // Used by AST json printing.
+        Encodable::encode(&self.create_token_stream(), s)
+    }
+}
+
+impl<D: Decoder> Decodable<D> for LazyTokenStream {
+    fn decode(_d: &mut D) -> Result<Self, D::Error> {
+        panic!("Attempted to decode LazyTokenStream");
+    }
+}
+
+impl<CTX> HashStable<CTX> for LazyTokenStream {
+    fn hash_stable(&self, _hcx: &mut CTX, _hasher: &mut StableHasher) {
+        panic!("Attempted to compute stable hash for LazyTokenStream");
+    }
+}
+
 /// A `TokenStream` is an abstract sequence of tokens, organized into `TokenTree`s.
 ///
 /// The goal is for procedural macros to work with `TokenStream`s and `TokenTree`s
 /// instead of a representation of the abstract syntax tree.
 /// Today's `TokenTree`s can still contain AST via `token::Interpolated` for back-compat.
 #[derive(Clone, Debug, Default, Encodable, Decodable)]
-pub struct TokenStream(pub Lrc<Vec<TreeAndSpacing>>);
+pub struct TokenStream(pub(crate) Lrc<Vec<TreeAndSpacing>>);
 
 pub type TreeAndSpacing = (TokenTree, Spacing);
 
@@ -169,7 +232,7 @@ impl TokenStream {
             }
         }
         if let Some((pos, comma, sp)) = suggestion {
-            let mut new_stream = vec![];
+            let mut new_stream = Vec::with_capacity(self.0.len() + 1);
             let parts = self.0.split_at(pos + 1);
             new_stream.extend_from_slice(parts.0);
             new_stream.push(comma);
@@ -266,6 +329,10 @@ impl TokenStream {
         }
     }
 
+    pub fn trees_ref(&self) -> CursorRef<'_> {
+        CursorRef::new(self)
+    }
+
     pub fn trees(&self) -> Cursor {
         self.clone().into_trees()
     }
@@ -286,19 +353,13 @@ impl TokenStream {
         t1.next().is_none() && t2.next().is_none()
     }
 
-    pub fn map_enumerated<F: FnMut(usize, TokenTree) -> TokenTree>(self, mut f: F) -> TokenStream {
+    pub fn map_enumerated<F: FnMut(usize, &TokenTree) -> TokenTree>(self, mut f: F) -> TokenStream {
         TokenStream(Lrc::new(
             self.0
                 .iter()
                 .enumerate()
-                .map(|(i, (tree, is_joint))| (f(i, tree.clone()), *is_joint))
+                .map(|(i, (tree, is_joint))| (f(i, tree), *is_joint))
                 .collect(),
-        ))
-    }
-
-    pub fn map<F: FnMut(TokenTree) -> TokenTree>(self, mut f: F) -> TokenStream {
-        TokenStream(Lrc::new(
-            self.0.iter().map(|(tree, is_joint)| (f(tree.clone()), *is_joint)).collect(),
         ))
     }
 }
@@ -362,6 +423,36 @@ impl TokenStreamBuilder {
     }
 }
 
+/// By-reference iterator over a `TokenStream`.
+#[derive(Clone)]
+pub struct CursorRef<'t> {
+    stream: &'t TokenStream,
+    index: usize,
+}
+
+impl<'t> CursorRef<'t> {
+    fn new(stream: &TokenStream) -> CursorRef<'_> {
+        CursorRef { stream, index: 0 }
+    }
+
+    fn next_with_spacing(&mut self) -> Option<&'t TreeAndSpacing> {
+        self.stream.0.get(self.index).map(|tree| {
+            self.index += 1;
+            tree
+        })
+    }
+}
+
+impl<'t> Iterator for CursorRef<'t> {
+    type Item = &'t TokenTree;
+
+    fn next(&mut self) -> Option<&'t TokenTree> {
+        self.next_with_spacing().map(|(tree, _)| tree)
+    }
+}
+
+/// Owning by-value iterator over a `TokenStream`.
+/// FIXME: Many uses of this can be replaced with by-reference iterator to avoid clones.
 #[derive(Clone)]
 pub struct Cursor {
     pub stream: TokenStream,
@@ -400,8 +491,8 @@ impl Cursor {
         self.index = index;
     }
 
-    pub fn look_ahead(&self, n: usize) -> Option<TokenTree> {
-        self.stream.0[self.index..].get(n).map(|(tree, _)| tree.clone())
+    pub fn look_ahead(&self, n: usize) -> Option<&TokenTree> {
+        self.stream.0[self.index..].get(n).map(|(tree, _)| tree)
     }
 }
 

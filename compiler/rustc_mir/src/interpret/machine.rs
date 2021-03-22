@@ -3,11 +3,13 @@
 //! interpreting common C functions leak into CTFE.
 
 use std::borrow::{Borrow, Cow};
+use std::fmt::Debug;
 use std::hash::Hash;
 
 use rustc_middle::mir;
 use rustc_middle::ty::{self, Ty};
 use rustc_span::def_id::DefId;
+use rustc_target::abi::Size;
 
 use super::{
     AllocId, Allocation, AllocationExtra, CheckInAllocMsg, Frame, ImmTy, InterpCx, InterpResult,
@@ -79,19 +81,19 @@ pub trait AllocMap<K: Hash + Eq, V> {
 /// and some use case dependent behaviour can instead be applied.
 pub trait Machine<'mir, 'tcx>: Sized {
     /// Additional memory kinds a machine wishes to distinguish from the builtin ones
-    type MemoryKind: ::std::fmt::Debug + ::std::fmt::Display + MayLeak + Eq + 'static;
+    type MemoryKind: Debug + std::fmt::Display + MayLeak + Eq + 'static;
 
     /// Tag tracked alongside every pointer. This is used to implement "Stacked Borrows"
     /// <https://www.ralfj.de/blog/2018/08/07/stacked-borrows.html>.
     /// The `default()` is used for pointers to consts, statics, vtables and functions.
     /// The `Debug` formatting is used for displaying pointers; we cannot use `Display`
     /// as `()` does not implement that, but it should be "nice" output.
-    type PointerTag: ::std::fmt::Debug + Copy + Eq + Hash + 'static;
+    type PointerTag: Debug + Copy + Eq + Hash + 'static;
 
     /// Machines can define extra (non-instance) things that represent values of function pointers.
     /// For example, Miri uses this to return a function pointer from `dlsym`
     /// that can later be called to execute the right thing.
-    type ExtraFnVal: ::std::fmt::Debug + Copy;
+    type ExtraFnVal: Debug + Copy;
 
     /// Extra data stored in every call frame.
     type FrameExtra;
@@ -175,7 +177,7 @@ pub trait Machine<'mir, 'tcx>: Sized {
     ) -> InterpResult<'tcx>;
 
     /// Called to evaluate `Abort` MIR terminator.
-    fn abort(_ecx: &mut InterpCx<'mir, 'tcx, Self>) -> InterpResult<'tcx, !> {
+    fn abort(_ecx: &mut InterpCx<'mir, 'tcx, Self>, _msg: String) -> InterpResult<'tcx, !> {
         throw_unsup_format!("aborting execution is not supported")
     }
 
@@ -298,6 +300,15 @@ pub trait Machine<'mir, 'tcx>: Sized {
         Ok(())
     }
 
+    /// Called after initializing static memory using the interpreter.
+    fn after_static_mem_initialized(
+        _ecx: &mut InterpCx<'mir, 'tcx, Self>,
+        _ptr: Pointer<Self::PointerTag>,
+        _size: Size,
+    ) -> InterpResult<'tcx> {
+        Ok(())
+    }
+
     /// Executes a retagging operation
     #[inline]
     fn retag(
@@ -365,9 +376,9 @@ pub macro compile_time_machine(<$mir: lifetime, $tcx: lifetime>) {
     type PointerTag = ();
     type ExtraFnVal = !;
 
-    type MemoryKind = !;
-    type MemoryMap = rustc_data_structures::fx::FxHashMap<AllocId, (MemoryKind<!>, Allocation)>;
-    const GLOBAL_KIND: Option<!> = None; // no copying of globals from `tcx` to machine memory
+    type MemoryMap =
+        rustc_data_structures::fx::FxHashMap<AllocId, (MemoryKind<Self::MemoryKind>, Allocation)>;
+    const GLOBAL_KIND: Option<Self::MemoryKind> = None; // no copying of globals from `tcx` to machine memory
 
     type AllocExtra = ();
     type FrameExtra = ();
@@ -406,7 +417,7 @@ pub macro compile_time_machine(<$mir: lifetime, $tcx: lifetime>) {
         _memory_extra: &Self::MemoryExtra,
         _id: AllocId,
         alloc: Cow<'b, Allocation>,
-        _kind: Option<MemoryKind<!>>,
+        _kind: Option<MemoryKind<Self::MemoryKind>>,
     ) -> (Cow<'b, Allocation<Self::PointerTag>>, Self::PointerTag) {
         // We do not use a tag so we can just cheaply forward the allocation
         (alloc, ())

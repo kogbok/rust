@@ -69,7 +69,6 @@ impl OpaqueEncoder for rustc_serialize::opaque::Encoder {
 pub trait TyEncoder<'tcx>: Encoder {
     const CLEAR_CROSS_CRATE: bool;
 
-    fn tcx(&self) -> TyCtxt<'tcx>;
     fn position(&self) -> usize;
     fn type_shorthands(&mut self) -> &mut FxHashMap<Ty<'tcx>, usize>;
     fn predicate_shorthands(&mut self) -> &mut FxHashMap<ty::Predicate<'tcx>, usize>;
@@ -162,7 +161,8 @@ encodable_via_deref! {
     ty::Region<'tcx>,
     &'tcx mir::Body<'tcx>,
     &'tcx mir::UnsafetyCheckResult,
-    &'tcx mir::BorrowCheckResult<'tcx>
+    &'tcx mir::BorrowCheckResult<'tcx>,
+    &'tcx mir::coverage::CodeRegion
 }
 
 pub trait TyDecoder<'tcx>: Decoder {
@@ -181,14 +181,6 @@ pub trait TyDecoder<'tcx>: Decoder {
     ) -> Result<Ty<'tcx>, Self::Error>
     where
         F: FnOnce(&mut Self) -> Result<Ty<'tcx>, Self::Error>;
-
-    fn cached_predicate_for_shorthand<F>(
-        &mut self,
-        shorthand: usize,
-        or_insert_with: F,
-    ) -> Result<ty::Predicate<'tcx>, Self::Error>
-    where
-        F: FnOnce(&mut Self) -> Result<ty::Predicate<'tcx>, Self::Error>;
 
     fn with_position<F, R>(&mut self, pos: usize, f: F) -> R
     where
@@ -286,7 +278,7 @@ impl<'tcx, D: TyDecoder<'tcx>> Decodable<D> for ty::Region<'tcx> {
 impl<'tcx, D: TyDecoder<'tcx>> Decodable<D> for CanonicalVarInfos<'tcx> {
     fn decode(decoder: &mut D) -> Result<Self, D::Error> {
         let len = decoder.read_usize()?;
-        let interned: Result<Vec<CanonicalVarInfo>, _> =
+        let interned: Result<Vec<CanonicalVarInfo<'tcx>>, _> =
             (0..len).map(|_| Decodable::decode(decoder)).collect();
         Ok(decoder.tcx().intern_canonical_var_infos(interned?.as_slice()))
     }
@@ -328,10 +320,14 @@ impl<'tcx, D: TyDecoder<'tcx>> RefDecodable<'tcx, D> for ty::List<Ty<'tcx>> {
     }
 }
 
-impl<'tcx, D: TyDecoder<'tcx>> RefDecodable<'tcx, D> for ty::List<ty::ExistentialPredicate<'tcx>> {
+impl<'tcx, D: TyDecoder<'tcx>> RefDecodable<'tcx, D>
+    for ty::List<ty::Binder<ty::ExistentialPredicate<'tcx>>>
+{
     fn decode(decoder: &mut D) -> Result<&'tcx Self, D::Error> {
         let len = decoder.read_usize()?;
-        Ok(decoder.tcx().mk_existential_predicates((0..len).map(|_| Decodable::decode(decoder)))?)
+        Ok(decoder
+            .tcx()
+            .mk_poly_existential_predicates((0..len).map(|_| Decodable::decode(decoder)))?)
     }
 }
 
@@ -380,11 +376,12 @@ impl<'tcx, D: TyDecoder<'tcx>> RefDecodable<'tcx, D> for [mir::abstract_const::N
 impl_decodable_via_ref! {
     &'tcx ty::TypeckResults<'tcx>,
     &'tcx ty::List<Ty<'tcx>>,
-    &'tcx ty::List<ty::ExistentialPredicate<'tcx>>,
+    &'tcx ty::List<ty::Binder<ty::ExistentialPredicate<'tcx>>>,
     &'tcx Allocation,
     &'tcx mir::Body<'tcx>,
     &'tcx mir::UnsafetyCheckResult,
-    &'tcx mir::BorrowCheckResult<'tcx>
+    &'tcx mir::BorrowCheckResult<'tcx>,
+    &'tcx mir::coverage::CodeRegion
 }
 
 #[macro_export]

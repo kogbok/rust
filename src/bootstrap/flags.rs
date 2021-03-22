@@ -7,11 +7,38 @@ use std::env;
 use std::path::PathBuf;
 use std::process;
 
+use build_helper::t;
 use getopts::Options;
 
 use crate::builder::Builder;
 use crate::config::{Config, TargetSelection};
+use crate::setup::Profile;
 use crate::{Build, DocTests};
+
+pub enum Color {
+    Always,
+    Never,
+    Auto,
+}
+
+impl Default for Color {
+    fn default() -> Self {
+        Self::Auto
+    }
+}
+
+impl std::str::FromStr for Color {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "always" => Ok(Self::Always),
+            "never" => Ok(Self::Never),
+            "auto" => Ok(Self::Auto),
+            _ => Err(()),
+        }
+    }
+}
 
 /// Deserialized version of all flags for this compile.
 pub struct Flags {
@@ -19,6 +46,7 @@ pub struct Flags {
     pub on_fail: Option<String>,
     pub stage: Option<u32>,
     pub keep_stage: Vec<u32>,
+    pub keep_stage_std: Vec<u32>,
 
     pub host: Option<Vec<TargetSelection>>,
     pub target: Option<Vec<TargetSelection>>,
@@ -27,9 +55,11 @@ pub struct Flags {
     pub cmd: Subcommand,
     pub incremental: bool,
     pub exclude: Vec<PathBuf>,
+    pub include_default_paths: bool,
     pub rustc_error_format: Option<String>,
     pub json_output: bool,
     pub dry_run: bool,
+    pub color: Color,
 
     // This overrides the deny-warnings configuration option,
     // which passes -Dwarnings to the compiler invocations.
@@ -38,6 +68,9 @@ pub struct Flags {
     pub deny_warnings: Option<bool>,
 
     pub llvm_skip_rebuild: Option<bool>,
+
+    pub rust_profile_use: Option<String>,
+    pub rust_profile_generate: Option<String>,
 }
 
 pub enum Subcommand {
@@ -45,9 +78,13 @@ pub enum Subcommand {
         paths: Vec<PathBuf>,
     },
     Check {
+        // Whether to run checking over all targets (e.g., unit / integration
+        // tests).
+        all_targets: bool,
         paths: Vec<PathBuf>,
     },
     Clippy {
+        fix: bool,
         paths: Vec<PathBuf>,
     },
     Fix {
@@ -88,6 +125,9 @@ pub enum Subcommand {
     Run {
         paths: Vec<PathBuf>,
     },
+    Setup {
+        profile: Profile,
+    },
 }
 
 impl Default for Subcommand {
@@ -115,6 +155,7 @@ Subcommands:
     dist        Build distribution artifacts
     install     Install distribution artifacts
     run, r      Run tools contained in this repository
+    setup       Create a config.toml (making it easier to use `x.py` itself)
 
 To learn more about a subcommand, run `./x.py <subcommand> -h`",
         );
@@ -128,6 +169,11 @@ To learn more about a subcommand, run `./x.py <subcommand> -h`",
         opts.optmulti("", "host", "host targets to build", "HOST");
         opts.optmulti("", "target", "target targets to build", "TARGET");
         opts.optmulti("", "exclude", "build paths to exclude", "PATH");
+        opts.optflag(
+            "",
+            "include-default-paths",
+            "include default paths in addition to the provided ones",
+        );
         opts.optopt("", "on-fail", "command to run on failure", "CMD");
         opts.optflag("", "dry-run", "dry run; don't build anything");
         opts.optopt(
@@ -141,6 +187,13 @@ To learn more about a subcommand, run `./x.py <subcommand> -h`",
             "",
             "keep-stage",
             "stage(s) to keep without recompiling \
+            (pass multiple times to keep e.g., both stages 0 and 1)",
+            "N",
+        );
+        opts.optmulti(
+            "",
+            "keep-stage-std",
+            "stage(s) of the standard library to keep without recompiling \
             (pass multiple times to keep e.g., both stages 0 and 1)",
             "N",
         );
@@ -160,6 +213,7 @@ To learn more about a subcommand, run `./x.py <subcommand> -h`",
         );
         opts.optopt("", "error-format", "rustc error format", "FORMAT");
         opts.optflag("", "json-output", "use message-format=json");
+        opts.optopt("", "color", "whether to use color in cargo and rustc output", "STYLE");
         opts.optopt(
             "",
             "llvm-skip-rebuild",
@@ -168,6 +222,8 @@ To learn more about a subcommand, run `./x.py <subcommand> -h`",
              VALUE overrides the skip-rebuild option in config.toml.",
             "VALUE",
         );
+        opts.optopt("", "rust-profile-generate", "rustc error format", "FORMAT");
+        opts.optopt("", "rust-profile-use", "rustc error format", "FORMAT");
 
         // We can't use getopt to parse the options until we have completed specifying which
         // options are valid, but under the current implementation, some options are conditional on
@@ -191,6 +247,7 @@ To learn more about a subcommand, run `./x.py <subcommand> -h`",
                 || (s == "install")
                 || (s == "run")
                 || (s == "r")
+                || (s == "setup")
         });
         let subcommand = match subcommand {
             Some(s) => s,
@@ -208,7 +265,13 @@ To learn more about a subcommand, run `./x.py <subcommand> -h`",
         match subcommand.as_str() {
             "test" | "t" => {
                 opts.optflag("", "no-fail-fast", "Run all tests regardless of failure");
-                opts.optmulti("", "test-args", "extra arguments", "ARGS");
+                opts.optmulti(
+                    "",
+                    "test-args",
+                    "extra arguments to be passed for the test tool being used \
+                        (e.g. libtest, compiletest or rustdoc)",
+                    "ARGS",
+                );
                 opts.optmulti(
                     "",
                     "rustc-args",
@@ -237,8 +300,14 @@ To learn more about a subcommand, run `./x.py <subcommand> -h`",
                         `/<build_base>/rustfix_missing_coverage.txt`",
                 );
             }
+            "check" | "c" => {
+                opts.optflag("", "all-targets", "Check all targets");
+            }
             "bench" => {
                 opts.optmulti("", "test-args", "extra arguments", "ARGS");
+            }
+            "clippy" => {
+                opts.optflag("", "fix", "automatically apply lint suggestions");
             }
             "doc" => {
                 opts.optflag("", "open", "open the docs in a browser");
@@ -445,10 +514,27 @@ Arguments:
     At least a tool needs to be called.",
                 );
             }
+            "setup" => {
+                subcommand_help.push_str(&format!(
+                    "\n
+x.py setup creates a `config.toml` which changes the defaults for x.py itself.
+
+Arguments:
+    This subcommand accepts a 'profile' to use for builds. For example:
+
+        ./x.py setup library
+
+    The profile is optional and you will be prompted interactively if it is not given.
+    The following profiles are available:
+
+{}",
+                    Profile::all_for_help("        ").trim_end()
+                ));
+            }
             _ => {}
         };
         // Get any optional paths which occur after the subcommand
-        let paths = matches.free[1..].iter().map(|p| p.into()).collect::<Vec<PathBuf>>();
+        let mut paths = matches.free[1..].iter().map(|p| p.into()).collect::<Vec<PathBuf>>();
 
         let cfg_file = env::var_os("BOOTSTRAP_CONFIG").map(PathBuf::from);
         let verbose = matches.opt_present("verbose");
@@ -460,8 +546,10 @@ Arguments:
 
         let cmd = match subcommand.as_str() {
             "build" | "b" => Subcommand::Build { paths },
-            "check" | "c" => Subcommand::Check { paths },
-            "clippy" => Subcommand::Clippy { paths },
+            "check" | "c" => {
+                Subcommand::Check { paths, all_targets: matches.opt_present("all-targets") }
+            }
+            "clippy" => Subcommand::Clippy { paths, fix: matches.opt_present("fix") },
             "fix" => Subcommand::Fix { paths },
             "test" | "t" => Subcommand::Test {
                 paths,
@@ -500,6 +588,26 @@ Arguments:
                 }
                 Subcommand::Run { paths }
             }
+            "setup" => {
+                let profile = if paths.len() > 1 {
+                    println!("\nat most one profile can be passed to setup\n");
+                    usage(1, &opts, verbose, &subcommand_help)
+                } else if let Some(path) = paths.pop() {
+                    let profile_string = t!(path.into_os_string().into_string().map_err(
+                        |path| format!("{} is not a valid UTF8 string", path.to_string_lossy())
+                    ));
+
+                    profile_string.parse().unwrap_or_else(|err| {
+                        eprintln!("error: {}", err);
+                        eprintln!("help: the available profiles are:");
+                        eprint!("{}", Profile::all_for_help("- "));
+                        std::process::exit(1);
+                    })
+                } else {
+                    t!(crate::setup::interactive_path())
+                };
+                Subcommand::Setup { profile }
+            }
             _ => {
                 usage(1, &opts, verbose, &subcommand_help);
             }
@@ -510,7 +618,9 @@ Arguments:
                 println!("--stage not supported for x.py check, always treated as stage 0");
                 process::exit(1);
             }
-            if matches.opt_str("keep-stage").is_some() {
+            if matches.opt_str("keep-stage").is_some()
+                || matches.opt_str("keep-stage-std").is_some()
+            {
                 println!("--keep-stage not supported for x.py check, only one stage available");
                 process::exit(1);
             }
@@ -527,6 +637,11 @@ Arguments:
                 .opt_strs("keep-stage")
                 .into_iter()
                 .map(|j| j.parse().expect("`keep-stage` should be a number"))
+                .collect(),
+            keep_stage_std: matches
+                .opt_strs("keep-stage-std")
+                .into_iter()
+                .map(|j| j.parse().expect("`keep-stage-std` should be a number"))
                 .collect(),
             host: if matches.opt_present("host") {
                 Some(
@@ -556,10 +671,16 @@ Arguments:
                 .into_iter()
                 .map(|p| p.into())
                 .collect::<Vec<_>>(),
+            include_default_paths: matches.opt_present("include-default-paths"),
             deny_warnings: parse_deny_warnings(&matches),
             llvm_skip_rebuild: matches.opt_str("llvm-skip-rebuild").map(|s| s.to_lowercase()).map(
                 |s| s.parse::<bool>().expect("`llvm-skip-rebuild` should be either true or false"),
             ),
+            color: matches
+                .opt_get_default("color", Color::Auto)
+                .expect("`color` should be `always`, `never`, or `auto`"),
+            rust_profile_use: matches.opt_str("rust-profile-use"),
+            rust_profile_generate: matches.opt_str("rust-profile-generate"),
         }
     }
 }
@@ -634,7 +755,7 @@ impl Subcommand {
 }
 
 fn split(s: &[String]) -> Vec<String> {
-    s.iter().flat_map(|s| s.split(',')).map(|s| s.to_string()).collect()
+    s.iter().flat_map(|s| s.split(',')).filter(|s| !s.is_empty()).map(|s| s.to_string()).collect()
 }
 
 fn parse_deny_warnings(matches: &getopts::Matches) -> Option<bool> {

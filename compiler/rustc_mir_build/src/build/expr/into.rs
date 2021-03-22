@@ -10,7 +10,6 @@ use rustc_hir as hir;
 use rustc_middle::mir::*;
 use rustc_middle::ty::{self, CanonicalUserTypeAnnotation};
 use rustc_span::symbol::sym;
-
 use rustc_target::spec::abi::Abi;
 
 impl<'a, 'tcx> Builder<'a, 'tcx> {
@@ -58,14 +57,11 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
             }
             ExprKind::NeverToAny { source } => {
                 let source = this.hir.mirror(source);
-                let is_call = match source.kind {
-                    ExprKind::Call { .. } | ExprKind::InlineAsm { .. } => true,
-                    _ => false,
-                };
+                let is_call = matches!(source.kind, ExprKind::Call { .. } | ExprKind::InlineAsm { .. });
 
                 // (#66975) Source could be a const of type `!`, so has to
                 // exist in the generated MIR.
-                unpack!(block = this.as_temp(block, this.local_scope(), source, Mutability::Mut,));
+                unpack!(block = this.as_temp(block, Some(this.local_scope()), source, Mutability::Mut,));
 
                 // This is an optimization. If the expression was a call then we already have an
                 // unreachable block. Don't bother to terminate it and create a new one.
@@ -140,23 +136,19 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
                 // body, even when the exact code in the body cannot unwind
 
                 let loop_block = this.cfg.start_new_block();
-                let exit_block = this.cfg.start_new_block();
 
                 // Start the loop.
                 this.cfg.goto(block, source_info, loop_block);
 
-                this.in_breakable_scope(Some(loop_block), exit_block, destination, move |this| {
+                this.in_breakable_scope(Some(loop_block), destination, expr_span, move |this| {
                     // conduct the test, if necessary
                     let body_block = this.cfg.start_new_block();
-                    let diverge_cleanup = this.diverge_cleanup();
                     this.cfg.terminate(
                         loop_block,
                         source_info,
-                        TerminatorKind::FalseUnwind {
-                            real_target: body_block,
-                            unwind: Some(diverge_cleanup),
-                        },
+                        TerminatorKind::FalseUnwind { real_target: body_block, unwind: None },
                     );
+                    this.diverge_from(loop_block);
 
                     // The “return” value of the loop body must always be an unit. We therefore
                     // introduce a unit temporary as the destination for the loop body.
@@ -164,8 +156,10 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
                     // Execute the body, branching back to the test.
                     let body_block_end = unpack!(this.into(tmp, body_block, body));
                     this.cfg.goto(body_block_end, source_info, loop_block);
-                });
-                exit_block.unit()
+
+                    // Loops are only exited by `break` expressions.
+                    None
+                })
             }
             ExprKind::Call { ty, fun, args, from_hir_call, fn_span } => {
                 let intrinsic = match *ty.kind() {
@@ -197,7 +191,13 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
                         .local_decls
                         .push(LocalDecl::with_source_info(ptr_ty, source_info).internal());
                     let ptr_temp = Place::from(ptr_temp);
+                    // No need for a scope, ptr_temp doesn't need drop
                     let block = unpack!(this.into(ptr_temp, block, ptr));
+                    // Maybe we should provide a scope here so that
+                    // `move_val_init` wouldn't leak on panic even with an
+                    // arbitrary `val` expression, but `schedule_drop`,
+                    // borrowck and drop elaboration all prevent us from
+                    // dropping `ptr_temp.deref()`.
                     this.into(this.hir.tcx().mk_place_deref(ptr_temp), block, val)
                 } else {
                     let args: Vec<_> = args
@@ -206,7 +206,6 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
                         .collect();
 
                     let success = this.cfg.start_new_block();
-                    let cleanup = this.diverge_cleanup();
 
                     this.record_operands_moved(&args);
 
@@ -218,7 +217,7 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
                         TerminatorKind::Call {
                             func: fun,
                             args,
-                            cleanup: Some(cleanup),
+                            cleanup: None,
                             // FIXME(varkor): replace this with an uninhabitedness-based check.
                             // This requires getting access to the current module to call
                             // `tcx.is_ty_uninhabited_from`, which is currently tricky to do.
@@ -231,6 +230,7 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
                             fn_span,
                         },
                     );
+                    this.diverge_from(block);
                     success.unit()
                 }
             }
@@ -271,12 +271,12 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
                 // (evaluating them in order given by user)
                 let fields_map: FxHashMap<_, _> = fields
                     .into_iter()
-                    .map(|f| (f.name, unpack!(block = this.as_operand(block, scope, f.expr))))
+                    .map(|f| (f.name, unpack!(block = this.as_operand(block, Some(scope), f.expr))))
                     .collect();
 
                 let field_names = this.hir.all_fields(adt_def, variant_index);
 
-                let fields = if let Some(FruInfo { base, field_types }) = base {
+                let fields: Vec<_> = if let Some(FruInfo { base, field_types }) = base {
                     let base = unpack!(block = this.as_place(block, base));
 
                     // MIR does not natively support FRU, so for each
@@ -405,7 +405,7 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
 
             // Avoid creating a temporary
             ExprKind::VarRef { .. }
-            | ExprKind::SelfRef
+            | ExprKind::UpvarRef { .. }
             | ExprKind::PlaceTypeAscription { .. }
             | ExprKind::ValueTypeAscription { .. } => {
                 debug_assert!(Category::of(&expr.kind) == Some(Category::Place));
@@ -435,14 +435,14 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
 
             ExprKind::Yield { value } => {
                 let scope = this.local_scope();
-                let value = unpack!(block = this.as_operand(block, scope, value));
+                let value = unpack!(block = this.as_operand(block, Some(scope), value));
                 let resume = this.cfg.start_new_block();
-                let cleanup = this.generator_drop_cleanup();
                 this.cfg.terminate(
                     block,
                     source_info,
-                    TerminatorKind::Yield { value, resume, resume_arg: destination, drop: cleanup },
+                    TerminatorKind::Yield { value, resume, resume_arg: destination, drop: None },
                 );
+                this.generator_drop_cleanup(block);
                 resume.unit()
             }
 
@@ -456,6 +456,7 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
             | ExprKind::Array { .. }
             | ExprKind::Tuple { .. }
             | ExprKind::Closure { .. }
+            | ExprKind::ConstBlock { .. }
             | ExprKind::Literal { .. }
             | ExprKind::ThreadLocalRef(_)
             | ExprKind::StaticRef { .. } => {

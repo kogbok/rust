@@ -190,7 +190,7 @@ impl<'tcx> MarkSymbolVisitor<'tcx> {
 
                     intravisit::walk_item(self, &item);
                 }
-                hir::ItemKind::ForeignMod(..) => {}
+                hir::ItemKind::ForeignMod { .. } => {}
                 _ => {
                     intravisit::walk_item(self, &item);
                 }
@@ -369,7 +369,7 @@ fn has_allow_dead_code_or_lang_attr(
 //         - This is because lang items are always callable from elsewhere.
 //   or
 //   2) We are not sure to be live or not
-//     * Implementation of a trait method
+//     * Implementations of traits and trait methods
 struct LifeSeeder<'k, 'tcx> {
     worklist: Vec<hir::HirId>,
     krate: &'k hir::Crate<'k>,
@@ -396,25 +396,10 @@ impl<'v, 'k, 'tcx> ItemLikeVisitor<'v> for LifeSeeder<'k, 'tcx> {
                     }
                 }
             }
-            hir::ItemKind::Trait(.., trait_item_refs) => {
-                for trait_item_ref in trait_item_refs {
-                    let trait_item = self.krate.trait_item(trait_item_ref.id);
-                    match trait_item.kind {
-                        hir::TraitItemKind::Const(_, Some(_))
-                        | hir::TraitItemKind::Fn(_, hir::TraitFn::Provided(_)) => {
-                            if has_allow_dead_code_or_lang_attr(
-                                self.tcx,
-                                trait_item.hir_id,
-                                &trait_item.attrs,
-                            ) {
-                                self.worklist.push(trait_item.hir_id);
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
             hir::ItemKind::Impl { ref of_trait, items, .. } => {
+                if of_trait.is_some() {
+                    self.worklist.push(item.hir_id);
+                }
                 for impl_item_ref in items {
                     let impl_item = self.krate.impl_item(impl_item_ref.id);
                     if of_trait.is_some()
@@ -437,12 +422,26 @@ impl<'v, 'k, 'tcx> ItemLikeVisitor<'v> for LifeSeeder<'k, 'tcx> {
         }
     }
 
-    fn visit_trait_item(&mut self, _item: &hir::TraitItem<'_>) {
-        // ignore: we are handling this in `visit_item` above
+    fn visit_trait_item(&mut self, trait_item: &hir::TraitItem<'_>) {
+        use hir::TraitItemKind::{Const, Fn};
+        if matches!(trait_item.kind, Const(_, Some(_)) | Fn(_, hir::TraitFn::Provided(_)))
+            && has_allow_dead_code_or_lang_attr(self.tcx, trait_item.hir_id, &trait_item.attrs)
+        {
+            self.worklist.push(trait_item.hir_id);
+        }
     }
 
     fn visit_impl_item(&mut self, _item: &hir::ImplItem<'_>) {
         // ignore: we are handling this in `visit_item` above
+    }
+
+    fn visit_foreign_item(&mut self, foreign_item: &hir::ForeignItem<'_>) {
+        use hir::ForeignItemKind::{Fn, Static};
+        if matches!(foreign_item.kind, Static(..) | Fn(..))
+            && has_allow_dead_code_or_lang_attr(self.tcx, foreign_item.hir_id, &foreign_item.attrs)
+        {
+            self.worklist.push(foreign_item.hir_id);
+        }
     }
 }
 
@@ -455,8 +454,8 @@ fn create_and_seed_worklist<'tcx>(
         .map
         .iter()
         .filter_map(
-            |(&id, level)| {
-                if level >= &privacy::AccessLevel::Reachable { Some(id) } else { None }
+            |(&id, &level)| {
+                if level >= privacy::AccessLevel::Reachable { Some(id) } else { None }
             },
         )
         .chain(
@@ -544,7 +543,7 @@ impl DeadVisitor<'tcx> {
         let def_id = self.tcx.hir().local_def_id(id);
         let inherent_impls = self.tcx.inherent_impls(def_id);
         for &impl_did in inherent_impls.iter() {
-            for &item_did in &self.tcx.associated_item_def_ids(impl_did)[..] {
+            for item_did in self.tcx.associated_item_def_ids(impl_did) {
                 if let Some(did) = item_did.as_local() {
                     let item_hir_id = self.tcx.hir().local_def_id_to_hir_id(did);
                     if self.live_symbols.contains(&item_hir_id) {

@@ -1,4 +1,4 @@
-use rand::prelude::*;
+use rand::RngCore;
 use std::iter::{repeat, FromIterator};
 use test::{black_box, Bencher};
 
@@ -241,7 +241,7 @@ fn bench_extend_recycle(b: &mut Bencher) {
     let mut data = vec![0; 1000];
 
     b.iter(|| {
-        let tmp = std::mem::replace(&mut data, Vec::new());
+        let tmp = std::mem::take(&mut data);
         let mut to_extend = black_box(Vec::new());
         to_extend.extend(tmp.into_iter());
         data = black_box(to_extend);
@@ -500,7 +500,7 @@ fn bench_in_place_recycle(b: &mut Bencher) {
     let mut data = vec![0; 1000];
 
     b.iter(|| {
-        let tmp = std::mem::replace(&mut data, Vec::new());
+        let tmp = std::mem::take(&mut data);
         data = black_box(
             tmp.into_iter()
                 .enumerate()
@@ -520,7 +520,7 @@ fn bench_in_place_zip_recycle(b: &mut Bencher) {
     rng.fill_bytes(&mut subst[..]);
 
     b.iter(|| {
-        let tmp = std::mem::replace(&mut data, Vec::new());
+        let tmp = std::mem::take(&mut data);
         let mangled = tmp
             .into_iter()
             .zip(subst.iter().copied())
@@ -570,6 +570,8 @@ fn bench_in_place_collect_droppable(b: &mut Bencher) {
     })
 }
 
+const LEN: usize = 16384;
+
 #[bench]
 fn bench_chain_collect(b: &mut Bencher) {
     let data = black_box([0; LEN]);
@@ -612,8 +614,6 @@ pub fn map_fast(l: &[(u32, u32)]) -> Vec<u32> {
     }
     result
 }
-
-const LEN: usize = 16384;
 
 #[bench]
 fn bench_range_map_collect(b: &mut Bencher) {

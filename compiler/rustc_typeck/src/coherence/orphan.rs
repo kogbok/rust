@@ -110,7 +110,7 @@ impl ItemLikeVisitor<'v> for OrphanChecker<'tcx> {
                             )
                             .note(
                                 "implementing a foreign trait is only possible if at \
-                                    least one of the types for which is it implemented is local, \
+                                    least one of the types for which it is implemented is local, \
                                     and no uncovered type parameters appear before that first \
                                     local type",
                             )
@@ -135,7 +135,7 @@ impl ItemLikeVisitor<'v> for OrphanChecker<'tcx> {
                                 local type",
                                 param_ty,
                             )).note("implementing a foreign trait is only possible if at \
-                                    least one of the types for which is it implemented is local"
+                                    least one of the types for which it is implemented is local"
                             ).note("only traits defined in the current crate can be \
                                     implemented for a type parameter"
                             ).emit();
@@ -244,4 +244,6 @@ impl ItemLikeVisitor<'v> for OrphanChecker<'tcx> {
     fn visit_trait_item(&mut self, _trait_item: &hir::TraitItem<'_>) {}
 
     fn visit_impl_item(&mut self, _impl_item: &hir::ImplItem<'_>) {}
+
+    fn visit_foreign_item(&mut self, _foreign_item: &hir::ForeignItem<'_>) {}
 }

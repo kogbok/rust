@@ -8,15 +8,17 @@ use if_chain::if_chain;
 use rustc_ast::{FloatTy, IntTy, LitFloatType, LitIntType, LitKind, UintTy};
 use rustc_errors::{Applicability, DiagnosticBuilder};
 use rustc_hir as hir;
+use rustc_hir::def::Res;
 use rustc_hir::intravisit::{walk_body, walk_expr, walk_ty, FnKind, NestedVisitorMap, Visitor};
 use rustc_hir::{
-    BinOpKind, Block, Body, Expr, ExprKind, FnDecl, FnRetTy, FnSig, GenericArg, GenericParamKind, HirId, ImplItem,
-    ImplItemKind, Item, ItemKind, Lifetime, Local, MatchSource, MutTy, Mutability, Node, QPath, Stmt, StmtKind,
-    TraitFn, TraitItem, TraitItemKind, TyKind, UnOp,
+    BinOpKind, Block, Body, Expr, ExprKind, FnDecl, FnRetTy, FnSig, GenericArg, GenericBounds, GenericParamKind, HirId,
+    ImplItem, ImplItemKind, Item, ItemKind, Lifetime, Lit, Local, MatchSource, MutTy, Mutability, Node, QPath, Stmt,
+    StmtKind, SyntheticTyParamKind, TraitFn, TraitItem, TraitItemKind, TyKind, UnOp,
 };
 use rustc_lint::{LateContext, LateLintPass, LintContext};
 use rustc_middle::hir::map::Map;
 use rustc_middle::lint::in_external_macro;
+use rustc_middle::ty::TypeFoldable;
 use rustc_middle::ty::{self, InferTy, Ty, TyCtxt, TyS, TypeckResults};
 use rustc_session::{declare_lint_pass, declare_tool_lint, impl_lint_pass};
 use rustc_span::hygiene::{ExpnKind, MacroKind};
@@ -215,11 +217,42 @@ declare_clippy_lint! {
     "redundant allocation"
 }
 
+declare_clippy_lint! {
+    /// **What it does:** Checks for `Rc<T>` and `Arc<T>` when `T` is a mutable buffer type such as `String` or `Vec`.
+    ///
+    /// **Why is this bad?** Expressions such as `Rc<String>` usually have no advantage over `Rc<str>`, since
+    /// it is larger and involves an extra level of indirection, and doesn't implement `Borrow<str>`.
+    ///
+    /// While mutating a buffer type would still be possible with `Rc::get_mut()`, it only
+    /// works if there are no additional references yet, which usually defeats the purpose of
+    /// enclosing it in a shared ownership type. Instead, additionally wrapping the inner
+    /// type with an interior mutable container (such as `RefCell` or `Mutex`) would normally
+    /// be used.
+    ///
+    /// **Known problems:** This pattern can be desirable to avoid the overhead of a `RefCell` or `Mutex` for
+    /// cases where mutation only happens before there are any additional references.
+    ///
+    /// **Example:**
+    /// ```rust,ignore
+    /// # use std::rc::Rc;
+    /// fn foo(interned: Rc<String>) { ... }
+    /// ```
+    ///
+    /// Better:
+    ///
+    /// ```rust,ignore
+    /// fn foo(interned: Rc<str>) { ... }
+    /// ```
+    pub RC_BUFFER,
+    restriction,
+    "shared ownership of a buffer type"
+}
+
 pub struct Types {
     vec_box_size_threshold: u64,
 }
 
-impl_lint_pass!(Types => [BOX_VEC, VEC_BOX, OPTION_OPTION, LINKEDLIST, BORROWED_BOX, REDUNDANT_ALLOCATION]);
+impl_lint_pass!(Types => [BOX_VEC, VEC_BOX, OPTION_OPTION, LINKEDLIST, BORROWED_BOX, REDUNDANT_ALLOCATION, RC_BUFFER]);
 
 impl<'tcx> LateLintPass<'tcx> for Types {
     fn check_fn(&mut self, cx: &LateContext<'_>, _: FnKind<'_>, decl: &FnDecl<'_>, _: &Body<'_>, _: Span, id: HirId) {
@@ -268,6 +301,19 @@ fn match_type_parameter(cx: &LateContext<'_>, qpath: &QPath<'_>, path: &[&str]) 
         then {
             return Some(ty.span);
         }
+    }
+    None
+}
+
+fn match_buffer_type(cx: &LateContext<'_>, qpath: &QPath<'_>) -> Option<&'static str> {
+    if match_type_parameter(cx, qpath, &paths::STRING).is_some() {
+        return Some("str");
+    }
+    if match_type_parameter(cx, qpath, &paths::OS_STRING).is_some() {
+        return Some("std::ffi::OsStr");
+    }
+    if match_type_parameter(cx, qpath, &paths::PATH_BUF).is_some() {
+        return Some("std::path::Path");
     }
     None
 }
@@ -321,14 +367,15 @@ impl Types {
                 if let Some(def_id) = res.opt_def_id() {
                     if Some(def_id) == cx.tcx.lang_items().owned_box() {
                         if let Some(span) = match_borrows_parameter(cx, qpath) {
+                            let mut applicability = Applicability::MachineApplicable;
                             span_lint_and_sugg(
                                 cx,
                                 REDUNDANT_ALLOCATION,
                                 hir_ty.span,
                                 "usage of `Box<&T>`",
                                 "try",
-                                snippet(cx, span, "..").to_string(),
-                                Applicability::MachineApplicable,
+                                snippet_with_applicability(cx, span, "..", &mut applicability).to_string(),
+                                applicability,
                             );
                             return; // don't recurse into the type
                         }
@@ -345,14 +392,15 @@ impl Types {
                         }
                     } else if cx.tcx.is_diagnostic_item(sym::Rc, def_id) {
                         if let Some(span) = match_type_parameter(cx, qpath, &paths::RC) {
+                            let mut applicability = Applicability::MachineApplicable;
                             span_lint_and_sugg(
                                 cx,
                                 REDUNDANT_ALLOCATION,
                                 hir_ty.span,
                                 "usage of `Rc<Rc<T>>`",
                                 "try",
-                                snippet(cx, span, "..").to_string(),
-                                Applicability::MachineApplicable,
+                                snippet_with_applicability(cx, span, "..", &mut applicability).to_string(),
+                                applicability,
                             );
                             return; // don't recurse into the type
                         }
@@ -368,30 +416,114 @@ impl Types {
                                 GenericArg::Type(ty) => ty.span,
                                 _ => return,
                             };
+                            let mut applicability = Applicability::MachineApplicable;
                             span_lint_and_sugg(
                                 cx,
                                 REDUNDANT_ALLOCATION,
                                 hir_ty.span,
                                 "usage of `Rc<Box<T>>`",
                                 "try",
-                                format!("Rc<{}>", snippet(cx, inner_span, "..")),
+                                format!(
+                                    "Rc<{}>",
+                                    snippet_with_applicability(cx, inner_span, "..", &mut applicability)
+                                ),
+                                applicability,
+                            );
+                            return; // don't recurse into the type
+                        }
+                        if let Some(alternate) = match_buffer_type(cx, qpath) {
+                            span_lint_and_sugg(
+                                cx,
+                                RC_BUFFER,
+                                hir_ty.span,
+                                "usage of `Rc<T>` when T is a buffer type",
+                                "try",
+                                format!("Rc<{}>", alternate),
+                                Applicability::MachineApplicable,
+                            );
+                            return; // don't recurse into the type
+                        }
+                        if match_type_parameter(cx, qpath, &paths::VEC).is_some() {
+                            let vec_ty = match &last_path_segment(qpath).args.unwrap().args[0] {
+                                GenericArg::Type(ty) => match &ty.kind {
+                                    TyKind::Path(qpath) => qpath,
+                                    _ => return,
+                                },
+                                _ => return,
+                            };
+                            let inner_span = match &last_path_segment(&vec_ty).args.unwrap().args[0] {
+                                GenericArg::Type(ty) => ty.span,
+                                _ => return,
+                            };
+                            let mut applicability = Applicability::MachineApplicable;
+                            span_lint_and_sugg(
+                                cx,
+                                RC_BUFFER,
+                                hir_ty.span,
+                                "usage of `Rc<T>` when T is a buffer type",
+                                "try",
+                                format!(
+                                    "Rc<[{}]>",
+                                    snippet_with_applicability(cx, inner_span, "..", &mut applicability)
+                                ),
                                 Applicability::MachineApplicable,
                             );
                             return; // don't recurse into the type
                         }
                         if let Some(span) = match_borrows_parameter(cx, qpath) {
+                            let mut applicability = Applicability::MachineApplicable;
                             span_lint_and_sugg(
                                 cx,
                                 REDUNDANT_ALLOCATION,
                                 hir_ty.span,
                                 "usage of `Rc<&T>`",
                                 "try",
-                                snippet(cx, span, "..").to_string(),
+                                snippet_with_applicability(cx, span, "..", &mut applicability).to_string(),
+                                applicability,
+                            );
+                            return; // don't recurse into the type
+                        }
+                    } else if cx.tcx.is_diagnostic_item(sym::Arc, def_id) {
+                        if let Some(alternate) = match_buffer_type(cx, qpath) {
+                            span_lint_and_sugg(
+                                cx,
+                                RC_BUFFER,
+                                hir_ty.span,
+                                "usage of `Arc<T>` when T is a buffer type",
+                                "try",
+                                format!("Arc<{}>", alternate),
                                 Applicability::MachineApplicable,
                             );
                             return; // don't recurse into the type
                         }
-                    } else if cx.tcx.is_diagnostic_item(sym!(vec_type), def_id) {
+                        if match_type_parameter(cx, qpath, &paths::VEC).is_some() {
+                            let vec_ty = match &last_path_segment(qpath).args.unwrap().args[0] {
+                                GenericArg::Type(ty) => match &ty.kind {
+                                    TyKind::Path(qpath) => qpath,
+                                    _ => return,
+                                },
+                                _ => return,
+                            };
+                            let inner_span = match &last_path_segment(&vec_ty).args.unwrap().args[0] {
+                                GenericArg::Type(ty) => ty.span,
+                                _ => return,
+                            };
+                            let mut applicability = Applicability::MachineApplicable;
+                            span_lint_and_sugg(
+                                cx,
+                                RC_BUFFER,
+                                hir_ty.span,
+                                "usage of `Arc<T>` when T is a buffer type",
+                                "try",
+                                format!(
+                                    "Arc<[{}]>",
+                                    snippet_with_applicability(cx, inner_span, "..", &mut applicability)
+                                ),
+                                Applicability::MachineApplicable,
+                            );
+                            return; // don't recurse into the type
+                        }
+                    } else if cx.tcx.is_diagnostic_item(sym::vec_type, def_id) {
                         if_chain! {
                             // Get the _ part of Vec<_>
                             if let Some(ref last) = last_path_segment(qpath).args;
@@ -411,6 +543,7 @@ impl Types {
                                 _ => None,
                             });
                             let ty_ty = hir_ty_to_ty(cx.tcx, boxed_ty);
+                            if !ty_ty.has_escaping_bound_vars();
                             if ty_ty.is_sized(cx.tcx.at(ty.span), cx.param_env);
                             if let Ok(ty_ty_size) = cx.layout_of(ty_ty).map(|l| l.size.bytes());
                             if ty_ty_size <= self.vec_box_size_threshold;
@@ -421,13 +554,13 @@ impl Types {
                                     hir_ty.span,
                                     "`Vec<T>` is already on the heap, the boxing is unnecessary.",
                                     "try",
-                                    format!("Vec<{}>", ty_ty),
+                                    format!("Vec<{}>", snippet(cx, boxed_ty.span, "..")),
                                     Applicability::MachineApplicable,
                                 );
                                 return; // don't recurse into the type
                             }
                         }
-                    } else if cx.tcx.is_diagnostic_item(sym!(option_type), def_id) {
+                    } else if cx.tcx.is_diagnostic_item(sym::option_type, def_id) {
                         if match_type_parameter(cx, qpath, &paths::OPTION).is_some() {
                             span_lint(
                                 cx,
@@ -546,18 +679,34 @@ impl Types {
                             // details.
                             return;
                         }
-                        let mut applicability = Applicability::MachineApplicable;
+
+                        // When trait objects or opaque types have lifetime or auto-trait bounds,
+                        // we need to add parentheses to avoid a syntax error due to its ambiguity.
+                        // Originally reported as the issue #3128.
+                        let inner_snippet = snippet(cx, inner.span, "..");
+                        let suggestion = match &inner.kind {
+                            TyKind::TraitObject(bounds, lt_bound) if bounds.len() > 1 || !lt_bound.is_elided() => {
+                                format!("&{}({})", ltopt, &inner_snippet)
+                            },
+                            TyKind::Path(qpath)
+                                if get_bounds_if_impl_trait(cx, qpath, inner.hir_id)
+                                    .map_or(false, |bounds| bounds.len() > 1) =>
+                            {
+                                format!("&{}({})", ltopt, &inner_snippet)
+                            },
+                            _ => format!("&{}{}", ltopt, &inner_snippet),
+                        };
                         span_lint_and_sugg(
                             cx,
                             BORROWED_BOX,
                             hir_ty.span,
                             "you seem to be trying to use `&Box<T>`. Consider using just `&T`",
                             "try",
-                            format!(
-                                "&{}{}",
-                                ltopt,
-                                &snippet_with_applicability(cx, inner.span, "..", &mut applicability)
-                            ),
+                            suggestion,
+                            // To make this `MachineApplicable`, at least one needs to check if it isn't a trait item
+                            // because the trait impls of it will break otherwise;
+                            // and there may be other cases that result in invalid code.
+                            // For example, type coercion doesn't work nicely.
                             Applicability::Unspecified,
                         );
                         return; // don't recurse into the type
@@ -584,6 +733,20 @@ fn is_any_trait(t: &hir::Ty<'_>) -> bool {
     }
 
     false
+}
+
+fn get_bounds_if_impl_trait<'tcx>(cx: &LateContext<'tcx>, qpath: &QPath<'_>, id: HirId) -> Option<GenericBounds<'tcx>> {
+    if_chain! {
+        if let Some(did) = qpath_res(cx, qpath, id).opt_def_id();
+        if let Some(Node::GenericParam(generic_param)) = cx.tcx.hir().get_if_local(did);
+        if let GenericParamKind::Type { synthetic, .. } = generic_param.kind;
+        if synthetic == Some(SyntheticTyParamKind::ImplTrait);
+        then {
+            Some(generic_param.bounds)
+        } else {
+            None
+        }
+    }
 }
 
 declare_clippy_lint! {
@@ -941,7 +1104,9 @@ fn is_empty_block(expr: &Expr<'_>) -> bool {
         expr.kind,
         ExprKind::Block(
             Block {
-                stmts: &[], expr: None, ..
+                stmts: &[],
+                expr: None,
+                ..
             },
             _,
         )
@@ -1089,7 +1254,8 @@ declare_clippy_lint! {
 }
 
 declare_clippy_lint! {
-    /// **What it does:** Checks for casts to the same type.
+    /// **What it does:** Checks for casts to the same type, casts of int literals to integer types
+    /// and casts of float literals to float types.
     ///
     /// **Why is this bad?** It's just unnecessary.
     ///
@@ -1098,6 +1264,14 @@ declare_clippy_lint! {
     /// **Example:**
     /// ```rust
     /// let _ = 2i32 as i32;
+    /// let _ = 0.5 as f32;
+    /// ```
+    ///
+    /// Better:
+    ///
+    /// ```rust
+    /// let _ = 2_i32;
+    /// let _ = 0.5_f32;
     /// ```
     pub UNNECESSARY_CAST,
     complexity,
@@ -1297,8 +1471,7 @@ fn check_loss_of_sign(cx: &LateContext<'_>, expr: &Expr<'_>, op: &Expr<'_>, cast
     // don't lint for positive constants
     let const_val = constant(cx, &cx.typeck_results(), op);
     if_chain! {
-        if let Some((const_val, _)) = const_val;
-        if let Constant::Int(n) = const_val;
+        if let Some((Constant::Int(n), _)) = const_val;
         if let ty::Int(ity) = *cast_from.kind();
         if sext(cx.tcx, n, ity) >= 0;
         then {
@@ -1438,7 +1611,7 @@ fn is_c_void(cx: &LateContext<'_>, ty: Ty<'_>) -> bool {
         if names.is_empty() {
             return false;
         }
-        if names[0] == sym!(libc) || names[0] == sym::core && *names.last().unwrap() == sym!(c_void) {
+        if names[0] == sym::libc || names[0] == sym::core && *names.last().unwrap() == sym!(c_void) {
             return true;
         }
     }
@@ -1460,10 +1633,19 @@ impl<'tcx> LateLintPass<'tcx> for Casts {
         if expr.span.from_expansion() {
             return;
         }
-        if let ExprKind::Cast(ref ex, _) = expr.kind {
+        if let ExprKind::Cast(ref ex, cast_to) = expr.kind {
+            if let TyKind::Path(QPath::Resolved(_, path)) = cast_to.kind {
+                if let Res::Def(_, def_id) = path.res {
+                    if cx.tcx.has_attr(def_id, sym::cfg) || cx.tcx.has_attr(def_id, sym::cfg_attr) {
+                        return;
+                    }
+                }
+            }
             let (cast_from, cast_to) = (cx.typeck_results().expr_ty(ex), cx.typeck_results().expr_ty(expr));
             lint_fn_to_numeric_cast(cx, expr, ex, cast_from, cast_to);
-            if let ExprKind::Lit(ref lit) = ex.kind {
+            if let Some(lit) = get_numeric_literal(ex) {
+                let literal_str = snippet_opt(cx, ex.span).unwrap_or_default();
+
                 if_chain! {
                     if let LitKind::Int(n, _) = lit.node;
                     if let Some(src) = snippet_opt(cx, lit.span);
@@ -1473,19 +1655,19 @@ impl<'tcx> LateLintPass<'tcx> for Casts {
                     let to_nbits = fp_ty_mantissa_nbits(cast_to);
                     if from_nbits != 0 && to_nbits != 0 && from_nbits <= to_nbits && num_lit.is_decimal();
                     then {
-                        span_lint_and_sugg(
-                            cx,
-                            UNNECESSARY_CAST,
-                            expr.span,
-                            &format!("casting integer literal to `{}` is unnecessary", cast_to),
-                            "try",
-                            format!("{}_{}", n, cast_to),
-                            Applicability::MachineApplicable,
-                        );
+                        let literal_str = if is_unary_neg(ex) { format!("-{}", num_lit.integer) } else { num_lit.integer.into() };
+                        show_unnecessary_cast(cx, expr, &literal_str, cast_from, cast_to);
                         return;
                     }
                 }
+
                 match lit.node {
+                    LitKind::Int(_, LitIntType::Unsuffixed) if cast_to.is_integral() => {
+                        show_unnecessary_cast(cx, expr, &literal_str, cast_from, cast_to);
+                    },
+                    LitKind::Float(_, LitFloatType::Unsuffixed) if cast_to.is_floating_point() => {
+                        show_unnecessary_cast(cx, expr, &literal_str, cast_from, cast_to);
+                    },
                     LitKind::Int(_, LitIntType::Unsuffixed) | LitKind::Float(_, LitFloatType::Unsuffixed) => {},
                     _ => {
                         if cast_from.kind() == cast_to.kind() && !in_external_macro(cx.sess(), expr.span) {
@@ -1509,6 +1691,37 @@ impl<'tcx> LateLintPass<'tcx> for Casts {
             lint_cast_ptr_alignment(cx, expr, cast_from, cast_to);
         }
     }
+}
+
+fn is_unary_neg(expr: &Expr<'_>) -> bool {
+    matches!(expr.kind, ExprKind::Unary(UnOp::UnNeg, _))
+}
+
+fn get_numeric_literal<'e>(expr: &'e Expr<'e>) -> Option<&'e Lit> {
+    match expr.kind {
+        ExprKind::Lit(ref lit) => Some(lit),
+        ExprKind::Unary(UnOp::UnNeg, e) => {
+            if let ExprKind::Lit(ref lit) = e.kind {
+                Some(lit)
+            } else {
+                None
+            }
+        },
+        _ => None,
+    }
+}
+
+fn show_unnecessary_cast(cx: &LateContext<'_>, expr: &Expr<'_>, literal_str: &str, cast_from: Ty<'_>, cast_to: Ty<'_>) {
+    let literal_kind_name = if cast_from.is_integral() { "integer" } else { "float" };
+    span_lint_and_sugg(
+        cx,
+        UNNECESSARY_CAST,
+        expr.span,
+        &format!("casting {} literal to `{}` is unnecessary", literal_kind_name, cast_to),
+        "try",
+        format!("{}_{}", literal_str.trim_end_matches('.'), cast_to),
+        Applicability::MachineApplicable,
+    );
 }
 
 fn lint_numeric_casts<'tcx>(
@@ -2572,7 +2785,7 @@ impl<'a, 'b, 'tcx> Visitor<'tcx> for ImplicitHasherConstructorVisitor<'a, 'b, 't
                 }
 
                 if match_path(ty_path, &paths::HASHMAP) {
-                    if method.ident.name == sym!(new) {
+                    if method.ident.name == sym::new {
                         self.suggestions
                             .insert(e.span, "HashMap::default()".to_string());
                     } else if method.ident.name == sym!(with_capacity) {
@@ -2585,7 +2798,7 @@ impl<'a, 'b, 'tcx> Visitor<'tcx> for ImplicitHasherConstructorVisitor<'a, 'b, 't
                         );
                     }
                 } else if match_path(ty_path, &paths::HASHSET) {
-                    if method.ident.name == sym!(new) {
+                    if method.ident.name == sym::new {
                         self.suggestions
                             .insert(e.span, "HashSet::default()".to_string());
                     } else if method.ident.name == sym!(with_capacity) {

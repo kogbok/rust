@@ -284,6 +284,44 @@ pub trait Iterator {
         self.fold(None, some)
     }
 
+    /// Advances the iterator by `n` elements.
+    ///
+    /// This method will eagerly skip `n` elements by calling [`next`] up to `n`
+    /// times until [`None`] is encountered.
+    ///
+    /// `advance_by(n)` will return [`Ok(())`][Ok] if the iterator successfully advances by
+    /// `n` elements, or [`Err(k)`][Err] if [`None`] is encountered, where `k` is the number
+    /// of elements the iterator is advanced by before running out of elements (i.e. the
+    /// length of the iterator). Note that `k` is always less than `n`.
+    ///
+    /// Calling `advance_by(0)` does not consume any elements and always returns [`Ok(())`][Ok].
+    ///
+    /// [`next`]: Iterator::next
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// #![feature(iter_advance_by)]
+    ///
+    /// let a = [1, 2, 3, 4];
+    /// let mut iter = a.iter();
+    ///
+    /// assert_eq!(iter.advance_by(2), Ok(()));
+    /// assert_eq!(iter.next(), Some(&3));
+    /// assert_eq!(iter.advance_by(0), Ok(()));
+    /// assert_eq!(iter.advance_by(100), Err(1)); // only `&4` was skipped
+    /// ```
+    #[inline]
+    #[unstable(feature = "iter_advance_by", reason = "recently added", issue = "77404")]
+    fn advance_by(&mut self, n: usize) -> Result<(), usize> {
+        for i in 0..n {
+            self.next().ok_or(i)?;
+        }
+        Ok(())
+    }
+
     /// Returns the `n`th element of the iterator.
     ///
     /// Like most indexing operations, the count starts from zero, so `nth(0)`
@@ -325,14 +363,9 @@ pub trait Iterator {
     /// ```
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
-    fn nth(&mut self, mut n: usize) -> Option<Self::Item> {
-        while let Some(x) = self.next() {
-            if n == 0 {
-                return Some(x);
-            }
-            n -= 1;
-        }
-        None
+    fn nth(&mut self, n: usize) -> Option<Self::Item> {
+        self.advance_by(n).ok()?;
+        self.next()
     }
 
     /// Creates an iterator starting at the same point, but stepping by
@@ -1299,7 +1332,7 @@ pub trait Iterator {
     /// assert_eq!(merged, "alphabetagamma");
     /// ```
     ///
-    /// Flattening once only removes one level of nesting:
+    /// Flattening only removes one level of nesting at a time:
     ///
     /// ```
     /// let d3 = [[[1, 2], [3, 4]], [[5, 6], [7, 8]]];
@@ -1313,7 +1346,7 @@ pub trait Iterator {
     ///
     /// Here we see that `flatten()` does not perform a "deep" flatten.
     /// Instead, only one level of nesting is removed. That is, if you
-    /// `flatten()` a three-dimensional array the result will be
+    /// `flatten()` a three-dimensional array, the result will be
     /// two-dimensional and not one-dimensional. To get a one-dimensional
     /// structure, you have to `flatten()` again.
     ///
@@ -1854,7 +1887,7 @@ pub trait Iterator {
         while let Some(x) = self.next() {
             accum = f(accum, x)?;
         }
-        Try::from_ok(accum)
+        try { accum }
     }
 
     /// An iterator method that applies a fallible function to each item in the
@@ -1976,6 +2009,8 @@ pub trait Iterator {
     /// // they're the same
     /// assert_eq!(result, result2);
     /// ```
+    #[doc(alias = "reduce")]
+    #[doc(alias = "inject")]
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     fn fold<B, F>(mut self, init: B, mut f: F) -> B
@@ -2074,7 +2109,7 @@ pub trait Iterator {
         F: FnMut(Self::Item) -> bool,
     {
         #[inline]
-        fn check<T>(mut f: impl FnMut(T) -> bool) -> impl FnMut((), T) -> ControlFlow<(), ()> {
+        fn check<T>(mut f: impl FnMut(T) -> bool) -> impl FnMut((), T) -> ControlFlow<()> {
             move |(), x| {
                 if f(x) { ControlFlow::CONTINUE } else { ControlFlow::BREAK }
             }
@@ -2127,7 +2162,7 @@ pub trait Iterator {
         F: FnMut(Self::Item) -> bool,
     {
         #[inline]
-        fn check<T>(mut f: impl FnMut(T) -> bool) -> impl FnMut((), T) -> ControlFlow<(), ()> {
+        fn check<T>(mut f: impl FnMut(T) -> bool) -> impl FnMut((), T) -> ControlFlow<()> {
             move |(), x| {
                 if f(x) { ControlFlow::BREAK } else { ControlFlow::CONTINUE }
             }
@@ -2187,9 +2222,7 @@ pub trait Iterator {
         P: FnMut(&Self::Item) -> bool,
     {
         #[inline]
-        fn check<T>(
-            mut predicate: impl FnMut(&T) -> bool,
-        ) -> impl FnMut((), T) -> ControlFlow<(), T> {
+        fn check<T>(mut predicate: impl FnMut(&T) -> bool) -> impl FnMut((), T) -> ControlFlow<T> {
             move |(), x| {
                 if predicate(&x) { ControlFlow::Break(x) } else { ControlFlow::CONTINUE }
             }
@@ -2220,9 +2253,7 @@ pub trait Iterator {
         F: FnMut(Self::Item) -> Option<B>,
     {
         #[inline]
-        fn check<T, B>(
-            mut f: impl FnMut(T) -> Option<B>,
-        ) -> impl FnMut((), T) -> ControlFlow<(), B> {
+        fn check<T, B>(mut f: impl FnMut(T) -> Option<B>) -> impl FnMut((), T) -> ControlFlow<B> {
             move |(), x| match f(x) {
                 Some(x) => ControlFlow::Break(x),
                 None => ControlFlow::CONTINUE,
@@ -2261,7 +2292,7 @@ pub trait Iterator {
         R: Try<Ok = bool>,
     {
         #[inline]
-        fn check<F, T, R>(mut f: F) -> impl FnMut((), T) -> ControlFlow<(), Result<T, R::Error>>
+        fn check<F, T, R>(mut f: F) -> impl FnMut((), T) -> ControlFlow<Result<T, R::Error>>
         where
             F: FnMut(&T) -> R,
             R: Try<Ok = bool>,
@@ -2820,7 +2851,7 @@ pub trait Iterator {
         Product::product(self)
     }
 
-    /// Lexicographically compares the elements of this [`Iterator`] with those
+    /// [Lexicographically](Ord#lexicographical-comparison) compares the elements of this [`Iterator`] with those
     /// of another.
     ///
     /// # Examples
@@ -2842,7 +2873,7 @@ pub trait Iterator {
         self.cmp_by(other, |x, y| x.cmp(&y))
     }
 
-    /// Lexicographically compares the elements of this [`Iterator`] with those
+    /// [Lexicographically](Ord#lexicographical-comparison) compares the elements of this [`Iterator`] with those
     /// of another with respect to the specified comparison function.
     ///
     /// # Examples
@@ -2894,7 +2925,7 @@ pub trait Iterator {
         }
     }
 
-    /// Lexicographically compares the elements of this [`Iterator`] with those
+    /// [Lexicographically](Ord#lexicographical-comparison) compares the elements of this [`Iterator`] with those
     /// of another.
     ///
     /// # Examples
@@ -2918,7 +2949,7 @@ pub trait Iterator {
         self.partial_cmp_by(other, |x, y| x.partial_cmp(&y))
     }
 
-    /// Lexicographically compares the elements of this [`Iterator`] with those
+    /// [Lexicographically](Ord#lexicographical-comparison) compares the elements of this [`Iterator`] with those
     /// of another with respect to the specified comparison function.
     ///
     /// # Examples
@@ -3058,7 +3089,7 @@ pub trait Iterator {
         !self.eq(other)
     }
 
-    /// Determines if the elements of this [`Iterator`] are lexicographically
+    /// Determines if the elements of this [`Iterator`] are [lexicographically](Ord#lexicographical-comparison)
     /// less than those of another.
     ///
     /// # Examples
@@ -3079,7 +3110,7 @@ pub trait Iterator {
         self.partial_cmp(other) == Some(Ordering::Less)
     }
 
-    /// Determines if the elements of this [`Iterator`] are lexicographically
+    /// Determines if the elements of this [`Iterator`] are [lexicographically](Ord#lexicographical-comparison)
     /// less or equal to those of another.
     ///
     /// # Examples
@@ -3100,7 +3131,7 @@ pub trait Iterator {
         matches!(self.partial_cmp(other), Some(Ordering::Less | Ordering::Equal))
     }
 
-    /// Determines if the elements of this [`Iterator`] are lexicographically
+    /// Determines if the elements of this [`Iterator`] are [lexicographically](Ord#lexicographical-comparison)
     /// greater than those of another.
     ///
     /// # Examples
@@ -3121,7 +3152,7 @@ pub trait Iterator {
         self.partial_cmp(other) == Some(Ordering::Greater)
     }
 
-    /// Determines if the elements of this [`Iterator`] are lexicographically
+    /// Determines if the elements of this [`Iterator`] are [lexicographically](Ord#lexicographical-comparison)
     /// greater than or equal to those of another.
     ///
     /// # Examples
@@ -3241,10 +3272,12 @@ pub trait Iterator {
     }
 
     /// See [TrustedRandomAccess]
+    // The unusual name is to avoid name collisions in method resolution
+    // see #76479.
     #[inline]
     #[doc(hidden)]
     #[unstable(feature = "trusted_random_access", issue = "none")]
-    unsafe fn get_unchecked(&mut self, _idx: usize) -> Self::Item
+    unsafe fn __iterator_get_unchecked(&mut self, _idx: usize) -> Self::Item
     where
         Self: TrustedRandomAccess,
     {
@@ -3260,6 +3293,9 @@ impl<I: Iterator + ?Sized> Iterator for &mut I {
     }
     fn size_hint(&self) -> (usize, Option<usize>) {
         (**self).size_hint()
+    }
+    fn advance_by(&mut self, n: usize) -> Result<(), usize> {
+        (**self).advance_by(n)
     }
     fn nth(&mut self, n: usize) -> Option<Self::Item> {
         (**self).nth(n)

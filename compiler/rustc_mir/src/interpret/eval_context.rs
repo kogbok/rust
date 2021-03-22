@@ -4,14 +4,12 @@ use std::mem;
 
 use rustc_data_structures::fx::FxHashMap;
 use rustc_data_structures::stable_hasher::{HashStable, StableHasher};
-use rustc_hir::{self as hir, def::DefKind, def_id::DefId, definitions::DefPathData};
+use rustc_hir::{self as hir, def_id::DefId, definitions::DefPathData};
 use rustc_index::vec::IndexVec;
 use rustc_macros::HashStable;
 use rustc_middle::ich::StableHashingContext;
 use rustc_middle::mir;
-use rustc_middle::mir::interpret::{
-    sign_extend, truncate, GlobalId, InterpResult, Pointer, Scalar,
-};
+use rustc_middle::mir::interpret::{GlobalId, InterpResult, Pointer, Scalar};
 use rustc_middle::ty::layout::{self, TyAndLayout};
 use rustc_middle::ty::{
     self, query::TyCtxtAt, subst::SubstsRef, ParamEnv, Ty, TyCtxt, TypeFoldable,
@@ -48,8 +46,41 @@ pub struct InterpCx<'mir, 'tcx, M: Machine<'mir, 'tcx>> {
         FxHashMap<(Ty<'tcx>, Option<ty::PolyExistentialTraitRef<'tcx>>), Pointer<M::PointerTag>>,
 }
 
+// The Phantomdata exists to prevent this type from being `Send`. If it were sent across a thread
+// boundary and dropped in the other thread, it would exit the span in the other thread.
+struct SpanGuard(tracing::Span, std::marker::PhantomData<*const u8>);
+
+impl SpanGuard {
+    /// By default a `SpanGuard` does nothing.
+    fn new() -> Self {
+        Self(tracing::Span::none(), std::marker::PhantomData)
+    }
+
+    /// If a span is entered, we exit the previous span (if any, normally none) and enter the
+    /// new span. This is mainly so we don't have to use `Option` for the `tracing_span` field of
+    /// `Frame` by creating a dummy span to being with and then entering it once the frame has
+    /// been pushed.
+    fn enter(&mut self, span: tracing::Span) {
+        // This executes the destructor on the previous instance of `SpanGuard`, ensuring that
+        // we never enter or exit more spans than vice versa. Unless you `mem::leak`, then we
+        // can't protect the tracing stack, but that'll just lead to weird logging, no actual
+        // problems.
+        *self = Self(span, std::marker::PhantomData);
+        self.0.with_subscriber(|(id, dispatch)| {
+            dispatch.enter(id);
+        });
+    }
+}
+
+impl Drop for SpanGuard {
+    fn drop(&mut self) {
+        self.0.with_subscriber(|(id, dispatch)| {
+            dispatch.exit(id);
+        });
+    }
+}
+
 /// A stack frame.
-#[derive(Clone)]
 pub struct Frame<'mir, 'tcx, Tag = (), Extra = ()> {
     ////////////////////////////////////////////////////////////////////////////////
     // Function and callsite information
@@ -79,6 +110,11 @@ pub struct Frame<'mir, 'tcx, Tag = (), Extra = ()> {
     /// `None` represents a local that is currently dead, while a live local
     /// can either directly contain `Scalar` or refer to some part of an `Allocation`.
     pub locals: IndexVec<mir::Local, LocalState<'tcx, Tag>>,
+
+    /// The span of the `tracing` crate is stored here.
+    /// When the guard is dropped, the span is exited. This gives us
+    /// a full stack trace on all tracing statements.
+    tracing_span: SpanGuard,
 
     ////////////////////////////////////////////////////////////////////////////////
     // Current position within the function
@@ -184,6 +220,7 @@ impl<'mir, 'tcx, Tag> Frame<'mir, 'tcx, Tag> {
             locals: self.locals,
             loc: self.loc,
             extra,
+            tracing_span: self.tracing_span,
         }
     }
 }
@@ -404,12 +441,12 @@ impl<'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> InterpCx<'mir, 'tcx, M> {
     #[inline(always)]
     pub fn sign_extend(&self, value: u128, ty: TyAndLayout<'_>) -> u128 {
         assert!(ty.abi.is_signed());
-        sign_extend(value, ty.size)
+        ty.size.sign_extend(value)
     }
 
     #[inline(always)]
     pub fn truncate(&self, value: u128, ty: TyAndLayout<'_>) -> u128 {
-        truncate(value, ty.size)
+        ty.size.truncate(value)
     }
 
     #[inline]
@@ -432,22 +469,18 @@ impl<'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> InterpCx<'mir, 'tcx, M> {
         if let Some(def) = def.as_local() {
             if self.tcx.has_typeck_results(def.did) {
                 if let Some(error_reported) = self.tcx.typeck_opt_const_arg(def).tainted_by_errors {
-                    throw_inval!(TypeckError(error_reported))
+                    throw_inval!(AlreadyReported(error_reported))
                 }
             }
         }
         trace!("load mir(instance={:?}, promoted={:?})", instance, promoted);
         if let Some(promoted) = promoted {
-            return Ok(&self.tcx.promoted_mir_of_opt_const_arg(def)[promoted]);
+            return Ok(&self.tcx.promoted_mir_opt_const_arg(def)[promoted]);
         }
         match instance {
             ty::InstanceDef::Item(def) => {
                 if self.tcx.is_mir_available(def.did) {
-                    if let Some((did, param_did)) = def.as_const_arg() {
-                        Ok(self.tcx.optimized_mir_of_const_arg((did, param_did)))
-                    } else {
-                        Ok(self.tcx.optimized_mir(def.did))
-                    }
+                    Ok(self.tcx.optimized_mir_opt_const_arg(def))
                 } else {
                     throw_unsup!(NoMirFor(def.did))
                 }
@@ -472,11 +505,7 @@ impl<'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> InterpCx<'mir, 'tcx, M> {
         frame: &Frame<'mir, 'tcx, M::PointerTag, M::FrameExtra>,
         value: T,
     ) -> T {
-        if let Some(substs) = frame.instance.substs_for_mir_body() {
-            self.tcx.subst_and_normalize_erasing_regions(substs, self.param_env, &value)
-        } else {
-            self.tcx.normalize_erasing_regions(self.param_env, value)
-        }
+        frame.instance.subst_mir_and_normalize_erasing_regions(*self.tcx, self.param_env, value)
     }
 
     /// The `substs` are assumed to already be in our interpreter "universe" (param_env).
@@ -492,8 +521,8 @@ impl<'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> InterpCx<'mir, 'tcx, M> {
             Ok(Some(instance)) => Ok(instance),
             Ok(None) => throw_inval!(TooGeneric),
 
-            // FIXME(eddyb) this could be a bit more specific than `TypeckError`.
-            Err(error_reported) => throw_inval!(TypeckError(error_reported)),
+            // FIXME(eddyb) this could be a bit more specific than `AlreadyReported`.
+            Err(error_reported) => throw_inval!(AlreadyReported(error_reported)),
         }
     }
 
@@ -637,11 +666,6 @@ impl<'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> InterpCx<'mir, 'tcx, M> {
         return_place: Option<PlaceTy<'tcx, M::PointerTag>>,
         return_to_block: StackPopCleanup,
     ) -> InterpResult<'tcx> {
-        if !self.stack().is_empty() {
-            info!("PAUSING({}) {}", self.frame_idx(), self.frame().instance);
-        }
-        ::log_settings::settings().indentation += 1;
-
         // first push a stack frame so we have access to the local substs
         let pre_frame = Frame {
             body,
@@ -652,6 +676,7 @@ impl<'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> InterpCx<'mir, 'tcx, M> {
             // all methods actually know about the frame
             locals: IndexVec::new(),
             instance,
+            tracing_span: SpanGuard::new(),
             extra: (),
         };
         let frame = M::init_frame_extra(self, pre_frame)?;
@@ -675,28 +700,20 @@ impl<'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> InterpCx<'mir, 'tcx, M> {
         let mut locals = IndexVec::from_elem(dummy, &body.local_decls);
 
         // Now mark those locals as dead that we do not want to initialize
-        match self.tcx.def_kind(instance.def_id()) {
-            // statics and constants don't have `Storage*` statements, no need to look for them
-            //
-            // FIXME: The above is likely untrue. See
-            // <https://github.com/rust-lang/rust/pull/70004#issuecomment-602022110>. Is it
-            // okay to ignore `StorageDead`/`StorageLive` annotations during CTFE?
-            DefKind::Static | DefKind::Const | DefKind::AssocConst => {}
-            _ => {
-                // Mark locals that use `Storage*` annotations as dead on function entry.
-                let always_live = AlwaysLiveLocals::new(self.body());
-                for local in locals.indices() {
-                    if !always_live.contains(local) {
-                        locals[local].value = LocalValue::Dead;
-                    }
-                }
+        // Mark locals that use `Storage*` annotations as dead on function entry.
+        let always_live = AlwaysLiveLocals::new(self.body());
+        for local in locals.indices() {
+            if !always_live.contains(local) {
+                locals[local].value = LocalValue::Dead;
             }
         }
         // done
         self.frame_mut().locals = locals;
         M::after_stack_push(self)?;
         self.frame_mut().loc = Ok(mir::Location::START);
-        info!("ENTERING({}) {}", self.frame_idx(), self.frame().instance);
+
+        let span = info_span!("frame", "{}", instance);
+        self.frame_mut().tracing_span.enter(span);
 
         Ok(())
     }
@@ -747,10 +764,8 @@ impl<'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> InterpCx<'mir, 'tcx, M> {
     /// cause us to continue unwinding.
     pub(super) fn pop_stack_frame(&mut self, unwinding: bool) -> InterpResult<'tcx> {
         info!(
-            "LEAVING({}) {} (unwinding = {})",
-            self.frame_idx(),
-            self.frame().instance,
-            unwinding
+            "popping stack frame ({})",
+            if unwinding { "during unwinding" } else { "returning from function" }
         );
 
         // Sanity check `unwinding`.
@@ -766,7 +781,6 @@ impl<'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> InterpCx<'mir, 'tcx, M> {
             throw_ub_format!("unwinding past the topmost frame of the stack");
         }
 
-        ::log_settings::settings().indentation -= 1;
         let frame =
             self.stack_mut().pop().expect("tried to pop a stack frame, but there were none");
 
@@ -823,48 +837,34 @@ impl<'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> InterpCx<'mir, 'tcx, M> {
             }
         }
 
-        if !self.stack().is_empty() {
-            info!(
-                "CONTINUING({}) {} (unwinding = {})",
-                self.frame_idx(),
-                self.frame().instance,
-                unwinding
-            );
-        }
-
         Ok(())
     }
 
-    /// Mark a storage as live, killing the previous content and returning it.
-    /// Remember to deallocate that!
-    pub fn storage_live(
-        &mut self,
-        local: mir::Local,
-    ) -> InterpResult<'tcx, LocalValue<M::PointerTag>> {
+    /// Mark a storage as live, killing the previous content.
+    pub fn storage_live(&mut self, local: mir::Local) -> InterpResult<'tcx> {
         assert!(local != mir::RETURN_PLACE, "Cannot make return place live");
         trace!("{:?} is now live", local);
 
         let local_val = LocalValue::Uninitialized;
-        // StorageLive *always* kills the value that's currently stored.
-        // However, we do not error if the variable already is live;
-        // see <https://github.com/rust-lang/rust/issues/42371>.
-        Ok(mem::replace(&mut self.frame_mut().locals[local].value, local_val))
+        // StorageLive expects the local to be dead, and marks it live.
+        let old = mem::replace(&mut self.frame_mut().locals[local].value, local_val);
+        if !matches!(old, LocalValue::Dead) {
+            throw_ub_format!("StorageLive on a local that was already live");
+        }
+        Ok(())
     }
 
-    /// Returns the old value of the local.
-    /// Remember to deallocate that!
-    pub fn storage_dead(&mut self, local: mir::Local) -> LocalValue<M::PointerTag> {
+    pub fn storage_dead(&mut self, local: mir::Local) -> InterpResult<'tcx> {
         assert!(local != mir::RETURN_PLACE, "Cannot make return place dead");
         trace!("{:?} is now dead", local);
 
-        mem::replace(&mut self.frame_mut().locals[local].value, LocalValue::Dead)
+        // It is entirely okay for this local to be already dead (at least that's how we currently generate MIR)
+        let old = mem::replace(&mut self.frame_mut().locals[local].value, LocalValue::Dead);
+        self.deallocate_local(old)?;
+        Ok(())
     }
 
-    pub(super) fn deallocate_local(
-        &mut self,
-        local: LocalValue<M::PointerTag>,
-    ) -> InterpResult<'tcx> {
-        // FIXME: should we tell the user that there was a local which was never written to?
+    fn deallocate_local(&mut self, local: LocalValue<M::PointerTag>) -> InterpResult<'tcx> {
         if let LocalValue::Live(Operand::Indirect(MemPlace { ptr, .. })) = local {
             // All locals have a backing allocation, even if the allocation is empty
             // due to the local having ZST type.
@@ -995,7 +995,16 @@ where
 {
     fn hash_stable(&self, hcx: &mut StableHashingContext<'ctx>, hasher: &mut StableHasher) {
         // Exhaustive match on fields to make sure we forget no field.
-        let Frame { body, instance, return_to_block, return_place, locals, loc, extra } = self;
+        let Frame {
+            body,
+            instance,
+            return_to_block,
+            return_place,
+            locals,
+            loc,
+            extra,
+            tracing_span: _,
+        } = self;
         body.hash_stable(hcx, hasher);
         instance.hash_stable(hcx, hasher);
         return_to_block.hash_stable(hcx, hasher);

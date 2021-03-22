@@ -69,7 +69,7 @@ use crate::sys_common::{AsInner, FromInner, IntoInner};
 /// [`&OsStr`]: OsStr
 /// [`&str`]: str
 /// [`CStr`]: crate::ffi::CStr
-/// [conversions]: index.html#conversions
+/// [conversions]: super#conversions
 #[derive(Clone)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct OsString {
@@ -88,13 +88,13 @@ pub struct OsString {
 /// the traits which `OsStr` implements for [conversions] from/to native representations.
 ///
 /// [`&str`]: str
-/// [conversions]: index.html#conversions
+/// [conversions]: super#conversions
 #[stable(feature = "rust1", since = "1.0.0")]
 // FIXME:
 // `OsStr::from_inner` current implementation relies
 // on `OsStr` being layout-compatible with `Slice`.
 // When attribute privacy is implemented, `OsStr` should be annotated as `#[repr(transparent)]`.
-// Anyway, `OsStr` representation and layout are considered implementation detail, are
+// Anyway, `OsStr` representation and layout are considered implementation details, are
 // not documented and must not be relied upon.
 pub struct OsStr {
     inner: Slice,
@@ -667,10 +667,10 @@ impl OsStr {
 
     /// Gets the underlying byte representation.
     ///
-    /// Note: it is *crucial* that this API is private, to avoid
+    /// Note: it is *crucial* that this API is not externally public, to avoid
     /// revealing the internal, platform-specific encodings.
     #[inline]
-    fn bytes(&self) -> &[u8] {
+    pub(crate) fn bytes(&self) -> &[u8] {
         unsafe { &*(&self.inner as *const _ as *const [u8]) }
     }
 
