@@ -386,6 +386,7 @@ impl Token {
                 NtPath(..) => true,
                 _ => false,
             },
+            At                                => true, // kogbok todo temporary
             _ => false,
         }
     }

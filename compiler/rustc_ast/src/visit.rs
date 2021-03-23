@@ -410,7 +410,8 @@ pub fn walk_ty<'a, V: Visitor<'a>>(visitor: &mut V, typ: &'a Ty) {
         TyKind::Typeof(ref expression) => visitor.visit_anon_const(expression),
         TyKind::Infer | TyKind::ImplicitSelf | TyKind::Err => {}
         TyKind::MacCall(ref mac) => visitor.visit_mac_call(mac),
-        TyKind::Never | TyKind::CVarArgs => {}
+        TyKind::Never | TyKind::CVarArgs => {},
+        TyKind::Variant(_) => unimplemented!("kogbok todo"),
     }
 }
 
@@ -531,6 +532,7 @@ pub fn walk_pat<'a, V: Visitor<'a>>(visitor: &mut V, pattern: &'a Pat) {
             walk_list!(visitor, visit_pat, elems);
         }
         PatKind::MacCall(ref mac) => visitor.visit_mac_call(mac),
+        PatKind::Variant(_) => unimplemented!("kogbok todo"),
     }
 }
 
@@ -862,6 +864,7 @@ pub fn walk_expr<'a, V: Visitor<'a>>(visitor: &mut V, expression: &'a Expr) {
         }
         ExprKind::Try(ref subexpression) => visitor.visit_expr(subexpression),
         ExprKind::TryBlock(ref body) => visitor.visit_block(body),
+        ExprKind::Variant(_) => unimplemented!("kogbok todo"),
         ExprKind::Lit(_) | ExprKind::Err => {}
     }
 

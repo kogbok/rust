@@ -243,6 +243,8 @@ impl<'hir> LoweringContext<'_, 'hir> {
                     return self.lower_expr_for(e, pat, head, body, opt_label);
                 }
                 ExprKind::MacCall(_) => panic!("{:?} shouldn't exist here", e.span),
+
+                ExprKind::Variant(_) => unimplemented!("kogbok todo"),
             };
 
             hir::Expr {

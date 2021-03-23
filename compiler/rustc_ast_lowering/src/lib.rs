@@ -1392,7 +1392,8 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
                     "`TyKind::CVarArgs` should have been handled elsewhere",
                 );
                 hir::TyKind::Err
-            }
+            },
+            TyKind::Variant(_) => unimplemented!("kogbok todo"),
         };
 
         hir::Ty { kind, span: t.span, hir_id: self.lower_node_id(t.id) }

@@ -1119,6 +1119,10 @@ impl<'a> Parser<'a> {
             } else {
                 self.parse_lit_expr(attrs)
             }
+        } else if self.check(&token::At) {
+            // kogbok todo: temporary syntax for variant types
+            self.parse_variant_typed_expr(attrs)
+            
         } else {
             self.parse_lit_expr(attrs)
         }
@@ -2265,6 +2269,12 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// temporary: Parses a "syntax for variant types" expression.
+    fn parse_variant_typed_expr(&mut self, attrs: AttrVec) -> PResult<'a, P<Expr>> {
+        self.expect(&token::At)?;
+        self.parse_path_start_expr(attrs)    
+    }
+    
     /// Check for `=`. This means the source incorrectly attempts to
     /// initialize a field with an eq rather than a colon.
     fn error_on_eq_field_init(&self, field_name: Ident) {

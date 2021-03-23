@@ -842,6 +842,7 @@ impl EarlyLintPass for UnusedParens {
             // Avoid linting on `&(mut x)` as `&mut x` has a different meaning, #55342.
             // Also avoid linting on `& mut? (p0 | .. | pn)`, #64106.
             Ref(p, m) => self.check_unused_parens_pat(cx, p, true, *m == Mutability::Not),
+            Variant(_) => unimplemented!("kogbok todo"),
         }
     }
 

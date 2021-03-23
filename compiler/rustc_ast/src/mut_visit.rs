@@ -490,6 +490,7 @@ pub fn noop_visit_ty<T: MutVisitor>(ty: &mut P<Ty>, vis: &mut T) {
             visit_vec(bounds, |bound| vis.visit_param_bound(bound));
         }
         TyKind::MacCall(mac) => vis.visit_mac_call(mac),
+        TyKind::Variant(_) => unimplemented!("kogbok todo"),
     }
     vis.visit_span(span);
     visit_lazy_tts(tokens, vis);
@@ -1118,6 +1119,7 @@ pub fn noop_visit_pat<T: MutVisitor>(pat: &mut P<Pat>, vis: &mut T) {
         }
         PatKind::Paren(inner) => vis.visit_pat(inner),
         PatKind::MacCall(mac) => vis.visit_mac_call(mac),
+        PatKind::Variant(_) => unimplemented!("kogbok todo"),
     }
     vis.visit_span(span);
     visit_lazy_tts(tokens, vis);
@@ -1308,6 +1310,7 @@ pub fn noop_visit_expr<T: MutVisitor>(
         }
         ExprKind::Try(expr) => vis.visit_expr(expr),
         ExprKind::TryBlock(body) => vis.visit_block(body),
+        ExprKind::Variant(_) => unimplemented!("kogbok todo"),
         ExprKind::Lit(_) | ExprKind::Err => {}
     }
     vis.visit_id(id);

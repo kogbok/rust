@@ -624,6 +624,9 @@ impl Pat {
             | PatKind::Ident(..)
             | PatKind::Path(..)
             | PatKind::MacCall(_) => {}
+
+            // For enum variant type
+            PatKind::Variant(_) => unimplemented!("kogbok todo"),
         }
     }
 
@@ -739,6 +742,9 @@ pub enum PatKind {
 
     /// A macro pattern; pre-expansion.
     MacCall(MacCall),
+
+    /// An enum variant type
+    Variant(P<Expr>),
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Copy)]
@@ -1242,6 +1248,7 @@ impl Expr {
             ExprKind::Paren(..) => ExprPrecedence::Paren,
             ExprKind::Try(..) => ExprPrecedence::Try,
             ExprKind::Yield(..) => ExprPrecedence::Yield,
+            ExprKind::Variant(_) => unimplemented!("kogbok todo"),
             ExprKind::Err => ExprPrecedence::Err,
         }
     }
@@ -1408,6 +1415,9 @@ pub enum ExprKind {
     /// A `yield`, with an optional value to be yielded.
     Yield(Option<P<Expr>>),
 
+    /// An enum variant type
+    Variant(P<Expr>), 
+    
     /// Placeholder for an expression that wasn't syntactically well formed in some way.
     Err,
 }
@@ -1966,6 +1976,8 @@ pub enum TyKind {
     Err,
     /// Placeholder for a `va_list`.
     CVarArgs,
+    /// An enum variant type
+    Variant(P<Expr>),
 }
 
 impl TyKind {

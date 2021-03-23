@@ -90,6 +90,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
                     // return inner to be processed in next loop
                     PatKind::Paren(ref inner) => pattern = inner,
                     PatKind::MacCall(_) => panic!("{:?} shouldn't exist here", pattern.span),
+                    PatKind::Variant(_) => unimplemented!("kogbok todo"),
                 }
             };
 

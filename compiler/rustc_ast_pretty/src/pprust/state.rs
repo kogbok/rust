@@ -1032,7 +1032,8 @@ impl<'a> State<'a> {
             }
             ast::TyKind::CVarArgs => {
                 self.s.word("...");
-            }
+            },
+            ast::TyKind::Variant(_) => unimplemented!("kogbok todo"),
         }
         self.end();
     }
@@ -2290,6 +2291,7 @@ impl<'a> State<'a> {
                 self.s.space();
                 self.print_block_with_attrs(blk, attrs)
             }
+            ast::ExprKind::Variant(_) => unimplemented!("kogbok todo"),
             ast::ExprKind::Err => {
                 self.popen();
                 self.s.word("/*ERROR*/");
@@ -2457,6 +2459,7 @@ impl<'a> State<'a> {
                 self.pclose();
             }
             PatKind::MacCall(ref m) => self.print_mac(m),
+            PatKind::Variant(_) => unimplemented!("kogbok todo"),
         }
         self.ann.post(self, AnnNode::Pat(pat))
     }
