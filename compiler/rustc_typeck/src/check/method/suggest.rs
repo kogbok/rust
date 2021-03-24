@@ -377,6 +377,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                                     }
                                 }
                             }
+                            ExprKind::Variant(_) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
                             _ => {}
                         }
                         err.emit();
@@ -526,6 +527,8 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                             if let Some(segment) = path.segments.last() {
                                 report_function!(expr.span, segment.ident);
                             }
+                        } else if let hir::ExprKind::Variant(_) = expr.kind {
+                            unimplemented!("kogbok todo"); // kogbok todo: it may not be useful
                         }
                     }
                 }

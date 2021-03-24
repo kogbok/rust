@@ -597,6 +597,8 @@ impl<'tcx> TypeckResults<'tcx> {
         // entries in type_dependent_defs, ignore the former here.
         if let hir::ExprKind::Path(_) = expr.kind {
             return false;
+        } else if let hir::ExprKind::Variant(_) = expr.kind {
+            unimplemented!("kogbok todo"); // kogbok todo: it may not be useful
         }
 
         matches!(self.type_dependent_defs().get(expr.hir_id), Some(Ok((DefKind::AssocFn, _))))

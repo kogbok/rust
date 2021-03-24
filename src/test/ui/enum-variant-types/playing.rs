@@ -6,7 +6,13 @@ enum Foo {
     Variant2,
 }
 
+impl Foo {
+    fn which(&self) -> u32 {
+      match self { Self::Variant1 => 1, Self::Variant2 => 2 }
+    }
+  }
 
 pub fn main() {
-    let _x = @Foo::Variant1;
+    let x = @Foo::Variant1;
+    assert_eq!((x as Foo).which(), 1);
 }

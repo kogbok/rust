@@ -1622,6 +1622,7 @@ impl<'a> State<'a> {
                 self.word_space("yield");
                 self.print_expr_maybe_paren(&expr, parser::PREC_JUMP);
             }
+            hir::ExprKind::Variant(..) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
             hir::ExprKind::Err => {
                 self.popen();
                 self.s.word("/*ERROR*/");

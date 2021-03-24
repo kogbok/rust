@@ -1181,7 +1181,9 @@ impl<'tcx> LateLintPass<'tcx> for MutableTransmutes {
         ) -> Option<(Ty<'tcx>, Ty<'tcx>)> {
             let def = if let hir::ExprKind::Path(ref qpath) = expr.kind {
                 cx.qpath_res(qpath, expr.hir_id)
-            } else {
+            } else if let hir::ExprKind::Variant(ref qpath) = expr.kind { 
+                cx.qpath_res(qpath, expr.hir_id) // kogbok todo: for the moment like Path
+            }  else {
                 return None;
             };
             if let Res::Def(DefKind::Fn, did) = def {
@@ -2383,6 +2385,8 @@ impl<'tcx> LateLintPass<'tcx> for InvalidValue {
                     {
                         return Some(InitKind::Zeroed);
                     }
+                } else if let hir::ExprKind::Variant(_) = expr.kind {
+                    unimplemented!("kogbok todo"); // kogbok todo: it may not be useful
                 }
             } else if let hir::ExprKind::MethodCall(_, _, ref args, _) = expr.kind {
                 // Find problematic calls to `MaybeUninit::assume_init`.
@@ -2399,6 +2403,8 @@ impl<'tcx> LateLintPass<'tcx> for InvalidValue {
                             } else if cx.tcx.is_diagnostic_item(sym::maybe_uninit_uninit, def_id) {
                                 return Some(InitKind::Uninit);
                             }
+                        } else if let hir::ExprKind::Variant(_) = path_expr.kind { // kogbok todo: it may not be useful
+                            unimplemented!("kogbok todo");
                         }
                     }
                 }

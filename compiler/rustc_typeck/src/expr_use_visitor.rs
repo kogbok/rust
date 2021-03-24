@@ -341,6 +341,8 @@ impl<'a, 'tcx> ExprUseVisitor<'a, 'tcx> {
             hir::ExprKind::Yield(ref value, _) => {
                 self.consume_expr(value);
             }
+            
+            hir::ExprKind::Variant(_) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
         }
     }
 

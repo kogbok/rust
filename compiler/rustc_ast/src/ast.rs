@@ -1422,7 +1422,7 @@ pub enum ExprKind {
     /// A `yield`, with an optional value to be yielded.
     Yield(Option<P<Expr>>),
 
-    /// An enum variant type
+    /// temporary syntax for enum variant type
     Variant(Path), 
     
     /// Placeholder for an expression that wasn't syntactically well formed in some way.

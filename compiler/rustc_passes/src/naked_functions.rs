@@ -140,7 +140,10 @@ impl<'tcx> Visitor<'tcx> for CheckParameters<'tcx> {
                     .emit();
                 return;
             }
+        } else if let hir::ExprKind::Variant(_) = expr.kind {
+            unimplemented!("kogbok todo"); // kogbok todo: it may not be useful
         }
+
         hir::intravisit::walk_expr(self, expr);
     }
 }
@@ -237,6 +240,8 @@ impl<'tcx> CheckInlineAssembly<'tcx> {
                     },
                 );
             }
+
+            ExprKind::Variant(_) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
 
             ExprKind::DropTemps(..) | ExprKind::Block(..) | ExprKind::Err => {
                 hir::intravisit::walk_expr(self, expr);

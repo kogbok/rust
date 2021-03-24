@@ -356,10 +356,13 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                                 self.typeck_results
                                     .borrow()
                                     .qpath_res(inner_qpath, inner_callee.hir_id)
+                            } else if let hir::ExprKind::Variant(_) = inner_callee.kind {
+                                unimplemented!("kogbok todo"); // kogbok todo: it may not be useful
                             } else {
                                 Res::Err
                             }
                         }
+                        hir::ExprKind::Variant(_) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
                         _ => Res::Err,
                     };
 

@@ -273,6 +273,9 @@ impl<'tcx> Visitor<'tcx> for MarkSymbolVisitor<'tcx> {
                     self.mark_as_used_if_union(adt, fields);
                 }
             }
+            hir::ExprKind::Variant(hir::QPath::Resolved(..)) => (), // kogbok todo: for the moment like Path
+            hir::ExprKind::Variant(hir::QPath::TypeRelative(..)) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
+            hir::ExprKind::Variant(hir::QPath::LangItem(..)) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
             _ => (),
         }
 

@@ -301,6 +301,7 @@ impl<'a, 'tcx> Visitor<'tcx> for InteriorVisitor<'a, 'tcx> {
                         _ => intravisit::walk_expr(self, expr),
                     }
                 }
+                ExprKind::Variant(_) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
                 _ => intravisit::walk_expr(self, expr),
             },
             ExprKind::Path(qpath) => {
@@ -313,6 +314,7 @@ impl<'a, 'tcx> Visitor<'tcx> for InteriorVisitor<'a, 'tcx> {
                     _ => {}
                 }
             }
+            ExprKind::Variant(_) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
             _ => intravisit::walk_expr(self, expr),
         }
 

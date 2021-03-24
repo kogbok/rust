@@ -97,6 +97,7 @@ impl<'tcx> Const<'tcx> {
                 let name = tcx.hir().name(hir_id);
                 ty::ConstKind::Param(ty::ParamConst::new(index, name))
             }
+            ExprKind::Variant(_) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
             _ => ty::ConstKind::Unevaluated(
                 def.to_global(),
                 InternalSubsts::identity_for_item(tcx, def.did.to_def_id()),

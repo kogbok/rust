@@ -1406,6 +1406,7 @@ impl Expr<'_> {
             ExprKind::Struct(..) => ExprPrecedence::Struct,
             ExprKind::Repeat(..) => ExprPrecedence::Repeat,
             ExprKind::Yield(..) => ExprPrecedence::Yield,
+            ExprKind::Variant(..) => ExprPrecedence::Path, //  kogbok todo: like Path for the moment
             ExprKind::Err => ExprPrecedence::Err,
         }
     }
@@ -1472,6 +1473,8 @@ impl Expr<'_> {
             | ExprKind::Cast(..)
             | ExprKind::DropTemps(..)
             | ExprKind::Err => false,
+
+            ExprKind::Variant(..) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
         }
     }
 
@@ -1511,6 +1514,8 @@ pub fn is_range_literal(expr: &Expr<'_>) -> bool {
             matches!(func.kind, ExprKind::Path(QPath::LangItem(LangItem::RangeInclusiveNew, _)))
         }
 
+        ExprKind::Variant(..) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
+        
         _ => false,
     }
 }
@@ -1624,6 +1629,9 @@ pub enum ExprKind<'hir> {
 
     /// A suspension point for generators (i.e., `yield <expr>`).
     Yield(&'hir Expr<'hir>, YieldSource),
+
+    /// temporary syntax for enum variant type
+    Variant(QPath<'hir>),
 
     /// A placeholder for an expression that wasn't syntactically well formed in some way.
     Err,

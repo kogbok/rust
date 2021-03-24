@@ -379,6 +379,11 @@ impl<'a, 'tcx> MemCategorizationContext<'a, 'tcx> {
             | hir::ExprKind::LlvmInlineAsm(..)
             | hir::ExprKind::Box(..)
             | hir::ExprKind::Err => Ok(self.cat_rvalue(expr.hir_id, expr.span, expr_ty)),
+
+            hir::ExprKind::Variant(ref qpath) => { // kogbok todo: for the moment like Path
+                let res = self.typeck_results.qpath_res(qpath, expr.hir_id);
+                self.cat_res(expr.hir_id, expr.span, expr_ty, res)
+            }
         }
     }
 

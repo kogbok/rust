@@ -117,6 +117,7 @@ impl<'tcx> LateLintPass<'tcx> for UnusedResults {
                             _ => None,
                         }
                     }
+                    hir::ExprKind::Variant(_) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
                     _ => None,
                 }
             }
@@ -368,6 +369,8 @@ impl<'tcx> LateLintPass<'tcx> for PathStatements {
                         lint.build("path statement with no effect").emit()
                     }
                 });
+            } else if let hir::ExprKind::Variant(_)  = expr.kind {
+                unimplemented!("kogbok todo"); // kogbok todo: it may not be useful
             }
         }
     }

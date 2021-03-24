@@ -1004,6 +1004,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                             None,
                             hir::Path { segments: [segment], .. },
                         )) => format!("`{}`", segment.ident),
+                        ExprKind::Variant(_) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
                         _ => "its receiver".to_string(),
                     }
                 ),

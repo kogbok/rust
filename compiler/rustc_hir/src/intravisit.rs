@@ -1219,6 +1219,9 @@ pub fn walk_expr<'v, V: Visitor<'v>>(visitor: &mut V, expression: &'v Expr<'v>) 
             visitor.visit_expr(subexpression);
         }
         ExprKind::Lit(_) | ExprKind::Err => {}
+        ExprKind::Variant(ref qpath) => { // kogbok todo: for the moment like Path
+            visitor.visit_qpath(qpath, expression.hir_id, expression.span);
+        }
     }
 }
 

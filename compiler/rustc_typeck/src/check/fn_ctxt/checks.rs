@@ -999,6 +999,8 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                         }
                     }
                 }
+            } else if let hir::ExprKind::Variant(_) = &path.kind {
+                unimplemented!("kogbok todo"); // kogbok todo: it may not be useful
             }
         }
     }

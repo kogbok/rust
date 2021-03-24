@@ -859,6 +859,8 @@ impl<'a, 'tcx> PatCtxt<'a, 'tcx> {
     fn lower_lit(&mut self, expr: &'tcx hir::Expr<'tcx>) -> PatKind<'tcx> {
         if let hir::ExprKind::Path(ref qpath) = expr.kind {
             *self.lower_path(qpath, expr.hir_id, expr.span).kind
+        } else if let hir::ExprKind::Variant(_) = expr.kind {
+            unimplemented!("kogbok todo"); // kogbok todo: it may not be useful
         } else {
             let (lit, neg) = match expr.kind {
                 hir::ExprKind::ConstBlock(ref anon_const) => {

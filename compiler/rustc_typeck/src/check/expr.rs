@@ -297,6 +297,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             ExprKind::Field(ref base, field) => self.check_field(expr, &base, field),
             ExprKind::Index(ref base, ref idx) => self.check_expr_index(base, idx, expr),
             ExprKind::Yield(ref value, ref src) => self.check_expr_yield(value, expr, src),
+            ExprKind::Variant(ref qpath) => self.check_expr_path(qpath, expr), // kogbok todo: for the moment like Path
             hir::ExprKind::Err => tcx.ty_error(),
         }
     }
@@ -655,6 +656,8 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                     if path.segments.len() == 1 && path.segments[0].ident.name == sym::rust {
                         fatally_break_rust(self.tcx.sess);
                     }
+                } else if let hir::ExprKind::Variant(_) = e.kind {
+                    unimplemented!("kogbok todo"); // kogbok todo: it may not be useful
                 }
             }
 

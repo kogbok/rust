@@ -252,7 +252,7 @@ impl<'hir> LoweringContext<'_, 'hir> {
                         ParamMode::Optional,
                         ImplTraitContext::disallowed(),
                     );
-                    hir::ExprKind::Path(qpath)
+                    hir::ExprKind::Variant(qpath)
                 }
             };
 

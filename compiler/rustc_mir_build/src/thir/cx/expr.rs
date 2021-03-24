@@ -192,6 +192,8 @@ fn make_mirror_unadjusted<'a, 'tcx>(
                             Res::SelfCtor(..) => Some((adt_def, VariantIdx::new(0))),
                             _ => None,
                         })
+                    } else if let hir::ExprKind::Variant(_) = fun.kind { 
+                        unimplemented!("kogbok todo"); // kogbok todo: it may not be useful
                     } else {
                         None
                     };
@@ -440,6 +442,7 @@ fn make_mirror_unadjusted<'a, 'tcx>(
                         hir::InlineAsmOperand::Sym { ref expr } => {
                             let qpath = match expr.kind {
                                 hir::ExprKind::Path(ref qpath) => qpath,
+                                hir::ExprKind::Variant(_) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
                                 _ => span_bug!(
                                     expr.span,
                                     "asm `sym` operand should be a path, found {:?}",
@@ -598,6 +601,8 @@ fn make_mirror_unadjusted<'a, 'tcx>(
                             _ => None,
                         }
                     })
+                } else if let hir::ExprKind::Variant(_) = expr.kind {
+                    unimplemented!("kogbok todo"); // kogbok todo: it may not be useful
                 } else {
                     None
                 };
@@ -672,6 +677,12 @@ fn make_mirror_unadjusted<'a, 'tcx>(
         hir::ExprKind::Tup(ref fields) => ExprKind::Tuple { fields: fields.to_ref() },
 
         hir::ExprKind::Yield(ref v, _) => ExprKind::Yield { value: v.to_ref() },
+
+        hir::ExprKind::Variant(ref qpath) => { // kogbok todo: for the moment like Path
+            let res = cx.typeck_results().qpath_res(qpath, expr.hir_id);
+            convert_path_expr(cx, expr, res)
+        }
+
         hir::ExprKind::Err => unreachable!(),
     };
 

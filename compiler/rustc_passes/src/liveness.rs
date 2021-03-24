@@ -463,6 +463,16 @@ impl<'tcx> Visitor<'tcx> for IrMaps<'tcx> {
             | hir::ExprKind::Path(hir::QPath::LangItem(..)) => {
                 intravisit::walk_expr(self, expr);
             }
+
+            hir::ExprKind::Variant(hir::QPath::Resolved(_, ref path)) => { // kogbok todo: for the moment like Path
+                debug!("expr {}: path that leads to {:?}", expr.hir_id, path.res);
+                if let Res::Local(_var_hir_id) = path.res {
+                    self.add_live_node_for_node(expr.hir_id, ExprNode(expr.span));
+                }
+                intravisit::walk_expr(self, expr);
+            }
+            hir::ExprKind::Variant(hir::QPath::TypeRelative(..)) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
+            hir::ExprKind::Variant(hir::QPath::LangItem(..)) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
         }
     }
 }
@@ -1094,6 +1104,12 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
             // Note that labels have been resolved, so we don't need to look
             // at the label ident
             hir::ExprKind::Block(ref blk, _) => self.propagate_through_block(&blk, succ),
+
+            hir::ExprKind::Variant(hir::QPath::Resolved(_, ref path)) => { // kogbok todo: for the moment like Path
+                self.access_path(expr.hir_id, path, succ, ACC_READ | ACC_USE)
+            }
+            hir::ExprKind::Variant(hir::QPath::TypeRelative(..)) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
+            hir::ExprKind::Variant(hir::QPath::LangItem(..)) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
         }
     }
 
@@ -1150,6 +1166,7 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
         match expr.kind {
             hir::ExprKind::Path(_) => succ,
             hir::ExprKind::Field(ref e, _) => self.propagate_through_expr(&e, succ),
+            hir::ExprKind::Variant(_) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
             _ => self.propagate_through_expr(expr, succ),
         }
     }
@@ -1160,7 +1177,7 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
             hir::ExprKind::Path(hir::QPath::Resolved(_, ref path)) => {
                 self.access_path(expr.hir_id, path, succ, acc)
             }
-
+            hir::ExprKind::Variant(_) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
             // We do not track other places, so just propagate through
             // to their subcomponents.  Also, it may happen that
             // non-places occur here, because those are detected in the
@@ -1356,6 +1373,8 @@ fn check_expr<'tcx>(this: &mut Liveness<'_, 'tcx>, expr: &'tcx Expr<'tcx>) {
         | hir::ExprKind::Box(..)
         | hir::ExprKind::Type(..)
         | hir::ExprKind::Err => {}
+
+        hir::ExprKind::Variant(_) => {}, // kogbok todo: for the moment like Path
     }
 
     intravisit::walk_expr(this, expr);
@@ -1375,6 +1394,7 @@ impl<'tcx> Liveness<'_, 'tcx> {
                     self.warn_about_dead_assign(vec![expr.span], expr.hir_id, ln, var);
                 }
             }
+            hir::ExprKind::Variant(_) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
             _ => {
                 // For other kinds of places, no checks are required,
                 // and any embedded expressions are actually rvalues

@@ -98,6 +98,7 @@ impl<'tcx> Visitor<'tcx> for ReachableContext<'tcx> {
                 .typeck_results()
                 .type_dependent_def(expr.hir_id)
                 .map(|(kind, def_id)| Res::Def(kind, def_id)),
+            hir::ExprKind::Variant(_) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
             _ => None,
         };
 

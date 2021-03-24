@@ -282,6 +282,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     fn can_use_as_ref(&self, expr: &hir::Expr<'_>) -> Option<(Span, &'static str, String)> {
         let path = match expr.kind {
             hir::ExprKind::Path(hir::QPath::Resolved(_, ref path)) => path,
+            hir::ExprKind::Variant(_) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
             _ => return None,
         };
 

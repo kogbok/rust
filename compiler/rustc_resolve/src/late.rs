@@ -2335,7 +2335,7 @@ impl<'a: 'ast, 'b, 'ast> LateResolutionVisitor<'a, 'b, 'ast> {
                 self.visit_expr(elem);
                 self.resolve_anon_const(ct, IsRepeatExpr::Yes);
             }
-            ExprKind::Variant(ref path) => {
+            ExprKind::Variant(ref path) => { // kogbok todo: for the moment like Path
                 self.smart_resolve_path(expr.id, None, path, PathSource::Expr(parent));
                 visit::walk_expr(self, expr);
             }

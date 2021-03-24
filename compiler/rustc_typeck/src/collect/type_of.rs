@@ -61,6 +61,14 @@ pub(super) fn opt_const_param_of(tcx: TyCtxt<'_>, def_id: LocalDefId) -> Option<
                     .map(|param| param.def_id)
             }
 
+            Node::Expr(&Expr {
+                kind:
+                    ExprKind::Variant(_),
+                ..
+            }) => {
+                unimplemented!("kogbok todo"); // kogbok todo: it may not be useful
+            }
+
             Node::Ty(&Ty { kind: TyKind::Path(_), .. })
             | Node::Expr(&Expr { kind: ExprKind::Struct(..), .. })
             | Node::Expr(&Expr { kind: ExprKind::Path(_), .. })
@@ -79,6 +87,11 @@ pub(super) fn opt_const_param_of(tcx: TyCtxt<'_>, def_id: LocalDefId) -> Option<
                         let _tables = tcx.typeck(body_owner);
                         &*path
                     }
+                    Node::Expr(&Expr {
+                        kind:
+                            ExprKind::Variant(_),
+                        ..
+                    }) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
                     _ => {
                         tcx.sess.delay_span_bug(
                             tcx.def_span(def_id),
@@ -136,7 +149,8 @@ pub(super) fn opt_const_param_of(tcx: TyCtxt<'_>, def_id: LocalDefId) -> Option<
                     .filter(|param| matches!(param.kind, ty::GenericParamDefKind::Const))
                     .nth(arg_index)
                     .map(|param| param.def_id)
-            }
+            }      
+
             _ => None,
         }
     } else {

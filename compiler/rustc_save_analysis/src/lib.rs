@@ -591,6 +591,7 @@ impl<'tcx> SaveContext<'tcx> {
             hir::ExprKind::Path(ref path) => {
                 self.get_path_data(expr.hir_id, path).map(Data::RefData)
             }
+            hir::ExprKind::Variant(_) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
             _ => {
                 // FIXME
                 bug!("invalid expression: {:?}", expr);
@@ -643,6 +644,8 @@ impl<'tcx> SaveContext<'tcx> {
             Node::Binding(&hir::Pat {
                 kind: hir::PatKind::Binding(_, canonical_id, ..), ..
             }) => Res::Local(canonical_id),
+
+            Node::Expr(&hir::Expr { kind: hir::ExprKind::Variant(_), .. }) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
 
             _ => Res::Err,
         }
