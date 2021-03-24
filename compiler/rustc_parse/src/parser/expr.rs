@@ -2272,7 +2272,23 @@ impl<'a> Parser<'a> {
     /// temporary: Parses a "syntax for variant types" expression.
     fn parse_variant_typed_expr(&mut self, attrs: AttrVec) -> PResult<'a, P<Expr>> {
         self.expect(&token::At)?;
-        self.parse_path_start_expr(attrs)    
+        if self.check_path() { // kogbok todo: check enum variant. For the moment, it's just a draft
+            let path = self.parse_path(PathStyle::Expr)?;
+            let lo = path.span;
+            let hi = path.span;
+            // let kind = ExprKind::Path(None, path);
+            let kind = ExprKind::Variant(path);
+            let expr = self.mk_expr(lo.to(hi), kind, attrs);
+            self.maybe_recover_from_bad_qpath(expr, true)
+        }
+        else {
+            let span = self.token.span;
+            let msg = format!("expected enum variant, found {}", super::token_descr(&self.token),);
+            
+            let mut err = self.struct_span_err(span, &msg);            
+            err.span_label(span, "expected enum variant");
+            Err(err)
+        }
     }
     
     /// Check for `=`. This means the source incorrectly attempts to

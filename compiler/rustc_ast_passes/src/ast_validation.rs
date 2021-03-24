@@ -290,6 +290,7 @@ impl<'a> AstValidator<'a> {
             ExprKind::Lit(..) | ExprKind::ConstBlock(..) | ExprKind::Err => {}
             ExprKind::Path(..) if allow_paths => {}
             ExprKind::Unary(UnOp::Neg, ref inner) if matches!(inner.kind, ExprKind::Lit(_)) => {}
+            ExprKind::Variant(_) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
             _ => self.err_handler().span_err(
                 expr.span,
                 "arbitrary expressions aren't allowed \

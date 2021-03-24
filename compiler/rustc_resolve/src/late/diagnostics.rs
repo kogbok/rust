@@ -710,6 +710,7 @@ impl<'a: 'ast, 'ast> LateResolutionVisitor<'a, '_, 'ast> {
                                 break;
                             }
                             ExprKind::AddrOf(_, _, expr) => expr_kind = &expr.kind,
+                            ExprKind::Variant(_) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
                             _ => break,
                         }
                     }

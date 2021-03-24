@@ -512,6 +512,7 @@ impl<'a> Parser<'a> {
             {
                 true
             }
+            ast::ExprKind::Variant(_) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
             _ => false,
         }
     }

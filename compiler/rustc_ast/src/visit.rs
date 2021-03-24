@@ -864,7 +864,7 @@ pub fn walk_expr<'a, V: Visitor<'a>>(visitor: &mut V, expression: &'a Expr) {
         }
         ExprKind::Try(ref subexpression) => visitor.visit_expr(subexpression),
         ExprKind::TryBlock(ref body) => visitor.visit_block(body),
-        ExprKind::Variant(_) => unimplemented!("kogbok todo"),
+        ExprKind::Variant(ref path) => visitor.visit_path(path, expression.id), // kogbok todo: for the moment like Path
         ExprKind::Lit(_) | ExprKind::Err => {}
     }
 

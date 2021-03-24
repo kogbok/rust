@@ -248,7 +248,8 @@ impl<'a> PathSource<'a> {
                             }
                         }
                         msg
-                    }
+                    },
+                    ExprKind::Variant(_) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
                     _ => "function",
                 },
                 _ => "value",
@@ -2333,6 +2334,10 @@ impl<'a: 'ast, 'b, 'ast> LateResolutionVisitor<'a, 'b, 'ast> {
             ExprKind::Repeat(ref elem, ref ct) => {
                 self.visit_expr(elem);
                 self.resolve_anon_const(ct, IsRepeatExpr::Yes);
+            }
+            ExprKind::Variant(ref path) => {
+                self.smart_resolve_path(expr.id, None, path, PathSource::Expr(parent));
+                visit::walk_expr(self, expr);
             }
             _ => {
                 visit::walk_expr(self, expr);

@@ -244,7 +244,16 @@ impl<'hir> LoweringContext<'_, 'hir> {
                 }
                 ExprKind::MacCall(_) => panic!("{:?} shouldn't exist here", e.span),
 
-                ExprKind::Variant(_) => unimplemented!("kogbok todo"),
+                ExprKind::Variant(ref path) => { // kogbok todo: for the moment like Path
+                    let qpath = self.lower_qpath(
+                        e.id,
+                        &None,
+                        path,
+                        ParamMode::Optional,
+                        ImplTraitContext::disallowed(),
+                    );
+                    hir::ExprKind::Path(qpath)
+                }
             };
 
             hir::Expr {
@@ -951,6 +960,11 @@ impl<'hir> LoweringContext<'_, 'hir> {
             }
             return Some(path);
         }
+
+        if let ExprKind::Variant(_) = &expr.kind {
+            unimplemented!("kogbok todo"); // kogbok todo: it may not be useful
+        }
+        
         None
     }
 

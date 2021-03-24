@@ -1310,7 +1310,7 @@ pub fn noop_visit_expr<T: MutVisitor>(
         }
         ExprKind::Try(expr) => vis.visit_expr(expr),
         ExprKind::TryBlock(body) => vis.visit_block(body),
-        ExprKind::Variant(_) => unimplemented!("kogbok todo"),
+        ExprKind::Variant(path) => vis.visit_path(path), // kogbok todo: for the moment like Path
         ExprKind::Lit(_) | ExprKind::Err => {}
     }
     vis.visit_id(id);

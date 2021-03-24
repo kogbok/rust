@@ -1356,6 +1356,11 @@ impl<'a> Parser<'a> {
     }
 
     pub(super) fn could_ascription_be_path(&self, node: &ast::ExprKind) -> bool {
+        
+        if let ast::ExprKind::Variant(_) = node { // kogbok todo: it may not be useful
+            unimplemented!("kogbok todo");
+        }
+
         (self.token == token::Lt && // `foo:<bar`, likely a typoed turbofish.
             self.look_ahead(1, |t| t.is_ident() && !t.is_reserved_ident()))
             || self.token.is_ident() &&

@@ -1152,6 +1152,10 @@ impl Expr {
             }
         }
 
+        if let ExprKind::Variant(_) = this.kind { // kogbok todo: it may not be useful
+            unimplemented!("kogbok todo");
+        }
+
         false
     }
 
@@ -1161,6 +1165,7 @@ impl Expr {
                 PolyTraitRef::new(Vec::new(), path.clone(), self.span),
                 TraitBoundModifier::None,
             )),
+            ExprKind::Variant(_) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
             _ => None,
         }
     }
@@ -1199,6 +1204,8 @@ impl Expr {
                     return None;
                 }
             }
+
+            ExprKind::Variant(_) => unimplemented!("kogbok todo"), // kogbok todo: it may not be useful
 
             // This expression doesn't look like a type syntactically.
             _ => return None,
@@ -1416,7 +1423,7 @@ pub enum ExprKind {
     Yield(Option<P<Expr>>),
 
     /// An enum variant type
-    Variant(P<Expr>), 
+    Variant(Path), 
     
     /// Placeholder for an expression that wasn't syntactically well formed in some way.
     Err,
