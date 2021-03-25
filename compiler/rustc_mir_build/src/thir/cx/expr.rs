@@ -680,7 +680,7 @@ fn make_mirror_unadjusted<'a, 'tcx>(
 
         hir::ExprKind::Variant(ref qpath) => { // kogbok todo: for the moment like Path
             let res = cx.typeck_results().qpath_res(qpath, expr.hir_id);
-            convert_path_expr(cx, expr, res)
+            convert_variant_expr(cx, expr, res)
         }
 
         hir::ExprKind::Err => unreachable!(),
@@ -894,6 +894,61 @@ fn convert_path_expr<'a, 'tcx>(
         Res::Local(var_hir_id) => convert_var(cx, var_hir_id),
 
         _ => span_bug!(expr.span, "res `{:?}` not yet implemented", res),
+    }
+}
+
+// kogbok todo: for the moment like Path (convert_path_expr)
+fn convert_variant_expr<'a, 'tcx>(
+    cx: &mut Cx<'a, 'tcx>,
+    expr: &'tcx hir::Expr<'tcx>,
+    res: Res,
+) -> ExprKind<'tcx> {
+    match res {
+        // A regular function, constructor function or a constant.
+        Res::Def(DefKind::Fn, _)
+        | Res::Def(DefKind::AssocFn, _)
+        | Res::Def(DefKind::Ctor(_, CtorKind::Fn), _)
+        | Res::SelfCtor(..) => {
+            unimplemented!("kogbok todo"); // kogbok todo: we probably don't want to be here ... 
+        }
+
+        Res::Def(DefKind::ConstParam, _) => {
+            unimplemented!("kogbok todo"); // kogbok todo: we probably don't want to be here ... 
+        }
+
+        Res::Def(DefKind::Const, _) | Res::Def(DefKind::AssocConst, _) => {
+            unimplemented!("kogbok todo"); // kogbok todo: we probably don't want to be here ... 
+        }
+
+        Res::Def(DefKind::Ctor(_, CtorKind::Const), def_id) => {
+            let user_provided_types = cx.typeck_results.user_provided_types();
+            let user_provided_type = user_provided_types.get(expr.hir_id).copied();
+            debug!("convert_path_expr: user_provided_type={:?}", user_provided_type);
+            let ty = cx.typeck_results().node_type(expr.hir_id);
+            match ty.kind() {
+                // A unit struct/variant which is used as a value.
+                // We return a completely different ExprKind here to account for this special case.
+                ty::Adt(adt_def, substs) => ExprKind::Adt {
+                    adt_def,
+                    variant_index: adt_def.variant_index_with_ctor_id(def_id),
+                    substs,
+                    user_ty: user_provided_type,
+                    fields: vec![],
+                    base: None,
+                },
+                _ => unimplemented!("kogbok todo"), // kogbok todo: we probably don't want to be here ... 
+            }
+        }
+
+        // We encode uses of statics as a `*&STATIC` where the `&STATIC` part is
+        // a constant reference (or constant raw pointer for `static mut`) in MIR
+        Res::Def(DefKind::Static, _) => {
+            unimplemented!("kogbok todo"); // kogbok todo: we probably don't want to be here ... 
+        }
+
+        Res::Local(_) => unimplemented!("kogbok todo"), // kogbok todo: we probably don't want to be here ... 
+
+        _ => unimplemented!("kogbok todo"), // kogbok todo: we probably don't want to be here ... 
     }
 }
 
