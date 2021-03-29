@@ -67,7 +67,7 @@ pub fn simplify_type(
         ty::Uint(uint_type) => Some(UintSimplifiedType(uint_type)),
         ty::Float(float_type) => Some(FloatSimplifiedType(float_type)),
         ty::Adt(def, _) => Some(AdtSimplifiedType(def.did)),
-        ty::Variant(_) => unimplemented!(),
+        ty::Variant(_, _) => unimplemented!("kogbok todo"), // kogbok todo
         ty::Str => Some(StrSimplifiedType),
         ty::Array(..) | ty::Slice(_) => Some(ArraySimplifiedType),
         ty::RawPtr(_) => Some(PtrSimplifiedType),

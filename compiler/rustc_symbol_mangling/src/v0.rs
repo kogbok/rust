@@ -429,7 +429,7 @@ impl Printer<'tcx> for SymbolMangler<'tcx> {
             | ty::Generator(def_id, substs, _) => {
                 self = self.print_def_path(def_id, substs)?;
             }
-            ty::Variant(_) => unimplemented!("CME todo"),
+            ty::Variant(_, _) => unimplemented!("CME todo"),
             ty::Foreign(def_id) => {
                 self = self.print_def_path(def_id, &[])?;
             }

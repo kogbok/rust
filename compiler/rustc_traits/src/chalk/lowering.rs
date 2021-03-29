@@ -271,7 +271,7 @@ impl<'tcx> LowerInto<'tcx, chalk_ir::Ty<RustInterner<'tcx>>> for Ty<'tcx> {
             ty::Adt(def, substs) => {
                 chalk_ir::TyKind::Adt(chalk_ir::AdtId(def), substs.lower_into(interner))
             }
-            ty::Variant(_) => unimplemented!("CME todo"),
+            ty::Variant(_, _) => unimplemented!("CME todo"),
             ty::Foreign(def_id) => chalk_ir::TyKind::Foreign(ForeignDefId(def_id)),
             ty::Str => chalk_ir::TyKind::Str,
             ty::Array(ty, len) => {

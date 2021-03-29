@@ -932,7 +932,7 @@ impl<'tcx> TypeFoldable<'tcx> for Ty<'tcx> {
             ty::Array(typ, sz) => ty::Array(typ.fold_with(folder), sz.fold_with(folder)),
             ty::Slice(typ) => ty::Slice(typ.fold_with(folder)),
             ty::Adt(tid, substs) => ty::Adt(tid, substs.fold_with(folder)),
-            ty::Variant(_) => unimplemented!("CME todo"),
+            ty::Variant(_, _) => unimplemented!("CME todo"),
             ty::Dynamic(trait_ty, region) => {
                 ty::Dynamic(trait_ty.fold_with(folder), region.fold_with(folder))
             }
@@ -979,7 +979,7 @@ impl<'tcx> TypeFoldable<'tcx> for Ty<'tcx> {
             }
             ty::Slice(typ) => typ.visit_with(visitor),
             ty::Adt(_, substs) => substs.visit_with(visitor),
-            ty::Variant(_) => unimplemented!("CME todo"),
+            ty::Variant(_, _) => unimplemented!("CME todo"),
             ty::Dynamic(ref trait_ty, ref reg) => {
                 trait_ty.visit_with(visitor)?;
                 reg.visit_with(visitor)

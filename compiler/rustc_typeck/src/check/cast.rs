@@ -107,7 +107,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                     self.pointer_kind(field_ty, span)?
                 }
             },
-            ty::Variant(_) => unimplemented!("CME todo"),
+            ty::Variant(_, _) => unimplemented!("CME todo"),
             ty::Tuple(fields) => match fields.last() {
                 None => Some(PointerKind::Thin),
                 Some(f) => self.pointer_kind(f.expect_ty(), span)?,

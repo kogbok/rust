@@ -429,7 +429,19 @@ impl Visitor<'tcx> for ExprVisitor<'tcx> {
             }
 
             hir::ExprKind::InlineAsm(asm) => self.check_asm(asm),
-
+            
+            hir::ExprKind::Variant(ref qpath) => { // kogbok todo: for the moment like Path
+                let res = self.typeck_results.qpath_res(qpath, expr.hir_id);
+                if let Res::Def(DefKind::Fn, did) = res {
+                    if self.def_id_is_transmute(did) {
+                        let typ = self.typeck_results.node_type(expr.hir_id);
+                        let sig = typ.fn_sig(self.tcx);
+                        let from = sig.inputs().skip_binder()[0];
+                        let to = sig.output().skip_binder();
+                        self.check_transmute(expr.span, from, to);
+                    }
+                }
+            }
             _ => {}
         }
 

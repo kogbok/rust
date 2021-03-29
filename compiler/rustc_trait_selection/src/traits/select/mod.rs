@@ -1548,7 +1548,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
                     }),
                 )
             }
-            ty::Variant(ref _var) => unimplemented!("CME todo"),
+            ty::Variant(_, _) => unimplemented!("CME todo"),
 
             ty::Projection(_) | ty::Param(_) | ty::Opaque(..) => None,
             ty::Infer(ty::TyVar(_)) => Ambiguous,
@@ -1618,10 +1618,12 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
                 }
             }
 
-            ty::Adt(..) | ty::Projection(..) | ty::Param(..) | ty::Opaque(..) | ty::Variant(_) => {
+            ty::Adt(..) | ty::Projection(..) | ty::Param(..) | ty::Opaque(..) => {
                 // Fallback to whatever user-defined impls exist in this case.
                 None
             }
+
+            ty::Variant(_, _) => unimplemented!("kogbok todo"),
 
             ty::Infer(ty::TyVar(_)) => {
                 // Unbound type variable. Might or might not have
@@ -1707,7 +1709,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
                 t.rebind(def.all_fields().map(|f| f.ty(self.tcx(), substs)).collect())
             }
 
-            ty::Variant(ref _var) => unimplemented!("CME todo"),
+            ty::Variant(_, _) => unimplemented!("CME todo"),
 
             ty::Opaque(def_id, substs) => {
                 // We can resolve the `impl Trait` to its concrete type,

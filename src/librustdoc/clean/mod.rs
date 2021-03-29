@@ -1601,7 +1601,7 @@ impl<'tcx> Clean<Type> for Ty<'tcx> {
                 let path = external_path(cx, cx.tcx.item_name(did), None, false, vec![], substs);
                 ResolvedPath { path, param_names: None, did, is_generic: false }
             }
-            ty::Variant(_) => unimplemented!("CME todo"),
+            ty::Variant(_, _) => unimplemented!("CME todo"),
             ty::Foreign(did) => {
                 inline::record_extern_fqn(cx, did, TypeKind::Foreign);
                 let path = external_path(

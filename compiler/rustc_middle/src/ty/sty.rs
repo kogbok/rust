@@ -23,28 +23,9 @@ use rustc_target::abi::VariantIdx;
 use rustc_target::spec::abi;
 use std::borrow::Cow;
 use std::cmp::Ordering;
-use std::hash::Hash;
 use std::marker::PhantomData;
 use std::ops::Range;
-use ty::{util::IntTypeExt, VariantDiscr};
-
-#[derive(PartialEq, Clone, Eq, TyDecodable, TyEncodable, Debug, Hash, HashStable)]
-pub struct VariantDef {
-    pub did: DefId,
-    pub discr: VariantDiscr,
-}
-
-impl PartialOrd for VariantDef {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.did.partial_cmp(&other.did)
-    }
-}
-
-impl Ord for VariantDef {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.did.cmp(&other.did)
-    }
-}
+use ty::{util::IntTypeExt};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, TyEncodable, TyDecodable)]
 #[derive(HashStable, TypeFoldable, Lift)]
@@ -215,8 +196,8 @@ pub enum TyKind<'tcx> {
     Opaque(DefId, SubstsRef<'tcx>),
 
     /// An enum variant type
-    /// The first DefId is the enum type, and the other is the discriminant.
-    Variant(VariantDef),
+    /// kogbok todo: Ty<'tcx> is guaranteed to be a TyKind::Adt, so we're carrying out the ADT and its variant.
+    Variant(Ty<'tcx>, VariantIdx),
 
     /// A type parameter; for example, `T` in `fn f<T>(x: T) {}`.
     Param(ParamTy),
@@ -2152,7 +2133,7 @@ impl<'tcx> TyS<'tcx> {
             | ty::Error(_)
             | ty::Infer(IntVar(_) | FloatVar(_)) => tcx.types.u8,
 
-            ty::Variant(_) => unimplemented!("kogbok todo"),
+            ty::Variant(_, _) => unimplemented!("kogbok todo"),
 
             ty::Bound(..)
             | ty::Placeholder(_)
@@ -2228,7 +2209,7 @@ impl<'tcx> TyS<'tcx> {
 
             ty::Adt(def, _substs) => def.sized_constraint(tcx).is_empty(),
 
-            ty::Variant(ref _var) => unimplemented!("CME todo"),
+            ty::Variant(_, _) => unimplemented!("CME todo"),
 
             ty::Projection(_) | ty::Param(_) | ty::Opaque(..) => false,
 

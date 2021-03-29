@@ -532,7 +532,7 @@ impl<'a, 'tcx> WfPredicates<'a, 'tcx> {
                     self.out.extend(obligations);
                 }
 
-                ty::Variant(_) => unimplemented!("CME todo"),
+                ty::Variant(_, _) => unimplemented!("CME todo"),
 
                 ty::FnDef(did, substs) => {
                     let obligations = self.nominal_obligations(did, substs);

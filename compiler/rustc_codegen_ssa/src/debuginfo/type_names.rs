@@ -48,7 +48,7 @@ pub fn push_debuginfo_type_name<'tcx>(
             push_item_name(tcx, def.did, qualified, output);
             push_type_params(tcx, substs, output, visited);
         }
-        ty::Variant(_) => {
+        ty::Variant(_, _) => {
             unimplemented!("CME todo");
         }
         ty::Tuple(component_types) => {

@@ -979,7 +979,7 @@ impl<'a, 'tcx> ImproperCTypesVisitor<'a, 'tcx> {
                 }
             }
 
-            ty::Variant(_) => FfiUnsafe {
+            ty::Variant(_, _) => FfiUnsafe {
                 ty,
                 reason: "enum variants are not currently supported for FFI".into(),
                 help: None,

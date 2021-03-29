@@ -149,7 +149,7 @@ impl FlagComputation {
                 self.add_substs(substs);
             }
 
-            &ty::Variant(_) => {
+            &ty::Variant(_, _) => {
                 unimplemented!("CME todo");
             }
 

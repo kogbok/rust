@@ -1308,7 +1308,7 @@ impl<'tcx> LayoutCx<'tcx, TyCtxt<'tcx>> {
                 tcx.intern_layout(best_layout)
             }
 
-            ty::Variant(_) => unimplemented!("CME todo"),
+            ty::Variant(_, _) => unimplemented!("CME todo"),
 
             // Types with no meaningful known layout.
             ty::Projection(_) | ty::Opaque(..) => {
@@ -2236,7 +2236,7 @@ where
                     }
                 }
 
-                ty::Variant(_) => unimplemented!("CME todo"),
+                ty::Variant(_, _) => unimplemented!("CME todo"),
 
                 ty::Projection(_)
                 | ty::Bound(..)

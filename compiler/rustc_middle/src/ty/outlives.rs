@@ -166,7 +166,6 @@ fn compute_components(
             ty::Float(..) |       // OutlivesScalar
             ty::Never |           // ...
             ty::Adt(..) |         // OutlivesNominalType
-            ty::Variant(_) |         // OutlivesNominalType
             ty::Opaque(..) |      // OutlivesNominalType (ish)
             ty::Foreign(..) |     // OutlivesNominalType
             ty::Str |             // OutlivesScalar (ish)
@@ -186,6 +185,7 @@ fn compute_components(
                 // themselves can be readily identified.
                 compute_components_recursive(tcx, ty.into(), out, visited);
             }
+            ty::Variant(_, _) => unimplemented!("kogbok todo"),
         }
 }
 

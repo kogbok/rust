@@ -44,7 +44,7 @@ fn sized_constraint_for_ty<'tcx>(
                 .collect()
         }
 
-        Variant(_) => unimplemented!("kogbok todo"),
+        Variant(_, _) => unimplemented!("kogbok todo"),
 
         Projection(..) | Opaque(..) => {
             // must calculate explicitly.

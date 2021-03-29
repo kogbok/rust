@@ -283,7 +283,7 @@ fn dtorck_constraint_for_ty<'tcx>(
             constraints.overflows.extend(overflows.subst(tcx, substs));
         }
 
-        ty::Variant(_) => {
+        ty::Variant(_, _) => {
             unimplemented!("CME todo");
         }
 

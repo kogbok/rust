@@ -586,7 +586,6 @@ impl<'rt, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> ValidityVisitor<'rt, 'mir, '
             // The above should be all the primitive types. The rest is compound, we
             // check them by visiting their fields/variants.
             ty::Adt(..)
-            | ty::Variant(_)
             | ty::Tuple(..)
             | ty::Array(..)
             | ty::Slice(..)
@@ -604,6 +603,8 @@ impl<'rt, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> ValidityVisitor<'rt, 'mir, '
             | ty::Opaque(..)
             | ty::Projection(..)
             | ty::GeneratorWitness(..) => bug!("Encountered invalid type {:?}", ty),
+            
+            ty::Variant(_, _) => unimplemented!("kogbok todo"),
         }
     }
 

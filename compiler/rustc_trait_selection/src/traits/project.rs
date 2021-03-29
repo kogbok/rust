@@ -1043,7 +1043,6 @@ fn assemble_candidates_from_impls<'cx, 'tcx>(
                     | ty::Uint(_)
                     | ty::Float(_)
                     | ty::Adt(..)
-                    | ty::Variant(_)
                     | ty::Foreign(_)
                     | ty::Str
                     | ty::Array(..)
@@ -1060,7 +1059,7 @@ fn assemble_candidates_from_impls<'cx, 'tcx>(
                     | ty::Tuple(..)
                     // Integers and floats always have `u8` as their discriminant.
                     | ty::Infer(ty::InferTy::IntVar(_) | ty::InferTy::FloatVar(..)) => true,
-
+                    ty::Variant(_, _) => unimplemented!("kogbok todo"),
                     ty::Projection(..)
                     | ty::Opaque(..)
                     | ty::Param(..)

@@ -76,7 +76,7 @@ crate fn eval_nullary_intrinsic<'tcx>(
         }
         sym::variant_count => match tp_ty.kind() {
             ty::Adt(ref adt, _) => ConstValue::from_machine_usize(adt.variants.len() as u64, &tcx),
-            ty::Variant(_) => unimplemented!("kogbok todo"),
+            ty::Variant(_, _) => unimplemented!("kogbok todo"),
             ty::Projection(_)
             | ty::Opaque(_, _)
             | ty::Param(_)
